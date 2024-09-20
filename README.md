@@ -29,7 +29,7 @@ _✨ Deep learning-based RAdio Fast Transient Search pipeline✨_
 
 ## <div align="center">Usage</div>
 
-The training code for our object detection and classification models is contained in the `BinaryClass` and `ObjectDet` folders. Training data and pre-trained models are available on [Hugging Face](https://huggingface.co/TorchLight/DRAFTS).
+The training code for our object detection and classification models is contained in the `BinaryClass` and `ObjectDet` folders. Training data and pre-trained models are available on HuggingFace [DRAFTS-Data](https://huggingface.co/datasets/TorchLight/DRAFTS) and [DRAFTS-Model](https://huggingface.co/TorchLight/DRAFTS).
 
 The required packages are listed in the `requirements.txt` file.
 
