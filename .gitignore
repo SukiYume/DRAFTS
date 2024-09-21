@@ -168,6 +168,7 @@ cython_debug/
 *.npy
 *.fits
 *.pth
+*.ps1
 
 Hug*/
 hugg*/
