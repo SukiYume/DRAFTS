@@ -164,8 +164,10 @@ cython_debug/
 *.pt
 *.ckpt
 
+# Ignore all .npy files
 *.npy
 *.fits
 *.pth
 
 Hug*/
+hugg*/
