@@ -20,7 +20,10 @@ _✨ Deep learning-based RAdio Fast Transient Search pipeline✨_
 
 ## <div align="center">Description</div>
 
-**Paper Link - [DRAFTS: A Deep Learning-Based Radio Fast Transient Search Pipeline, arXiv:2410.03200](https://arxiv.org/abs/2410.03200)**
+<p align="center">
+  <b>Paper Link - <a href="https://arxiv.org/abs/2410.03200" style="color:teal;">DRAFTS: A Deep Learning-Based Radio Fast Transient Search Pipeline, arXiv:2410.03200</a></b>
+</p>
+
 
 ![DRAFTS WorkFlow](./WorkFlow.png)
 
