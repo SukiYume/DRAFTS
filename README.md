@@ -20,6 +20,8 @@ _✨ Deep learning-based RAdio Fast Transient Search pipeline✨_
 
 ## <div align="center">Description</div>
 
+**Paper Link - [DRAFTS: A Deep Learning-Based Radio Fast Transient Search Pipeline, arXiv:2410.03200](https://arxiv.org/abs/2410.03200)**
+
 ![DRAFTS WorkFlow](./WorkFlow.png)
 
 > Traditional single-pulse search techniques, such as Presto and Hemidall, suffer a series of challenges, including intricate installation procedures, sluggish execution, incomplete outcomes, and a reliance on human result verification.
