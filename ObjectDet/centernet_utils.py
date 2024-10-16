@@ -93,33 +93,6 @@ def decode_bbox(pred_hms, pred_whs, pred_offsets, confidence, cuda):
     return detects
 
 
-def bbox_iou(box1, box2, x1y1x2y2=True):
-
-    if not x1y1x2y2:
-        b1_x1, b1_x2 = box1[:, 0] - box1[:, 2] / 2, box1[:, 0] + box1[:, 2] / 2
-        b1_y1, b1_y2 = box1[:, 1] - box1[:, 3] / 2, box1[:, 1] + box1[:, 3] / 2
-        b2_x1, b2_x2 = box2[:, 0] - box2[:, 2] / 2, box2[:, 0] + box2[:, 2] / 2
-        b2_y1, b2_y2 = box2[:, 1] - box2[:, 3] / 2, box2[:, 1] + box2[:, 3] / 2
-    else:
-        b1_x1, b1_y1, b1_x2, b1_y2 = box1[:, 0], box1[:, 1], box1[:, 2], box1[:, 3]
-        b2_x1, b2_y1, b2_x2, b2_y2 = box2[:, 0], box2[:, 1], box2[:, 2], box2[:, 3]
-
-    inter_rect_x1 = torch.max(b1_x1, b2_x1)
-    inter_rect_y1 = torch.max(b1_y1, b2_y1)
-    inter_rect_x2 = torch.min(b1_x2, b2_x2)
-    inter_rect_y2 = torch.min(b1_y2, b2_y2)
-
-    inter_area = torch.clamp(inter_rect_x2 - inter_rect_x1, min=0) * \
-                 torch.clamp(inter_rect_y2 - inter_rect_y1, min=0)
-
-    b1_area = (b1_x2 - b1_x1) * (b1_y2 - b1_y1)
-    b2_area = (b2_x2 - b2_x1) * (b2_y2 - b2_y1)
-
-    iou = inter_area / torch.clamp(b1_area + b2_area - inter_area, min = 1e-6)
-
-    return iou
-
-
 def postprocess(prediction, need_nms, input_shape, nms_iou=0.4):
     output = [None for _ in range(len(prediction))]
 
@@ -160,3 +133,17 @@ def postprocess(prediction, need_nms, input_shape, nms_iou=0.4):
             output[i][:, :4]   *= input_shape
 
     return output
+
+
+def get_res(hm, wh, offset, confidence):
+
+    outputs = decode_bbox(hm, wh, offset, confidence, cuda=True)
+    results = postprocess(outputs, True, 512, nms_iou=0.3)
+
+    if results[0] is None:
+        return None, None
+
+    top_conf    = results[0][:, 4]
+    top_boxes   = results[0][:, :4]
+
+    return top_conf, top_boxes

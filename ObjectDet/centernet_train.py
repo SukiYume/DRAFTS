@@ -12,7 +12,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 from timm.scheduler import CosineLRScheduler
 from centernet_data import BurstDataset
 from centernet_model import centernet, centerloss
-from centernet_utils import decode_bbox, postprocess, denormalize
+from centernet_utils import get_res, denormalize
 from sklearn.model_selection import train_test_split
 
 
@@ -36,20 +36,6 @@ def load_train_cat(train_path):
     train_id, test_id = train_test_split(image_ids, test_size=0.2)
 
     return data, train_id, test_id
-
-
-def get_res(hm, wh, offset, confidence):
-
-    outputs = decode_bbox(hm, wh, offset, confidence, cuda=True)
-    results = postprocess(outputs, True, 512, nms_iou=0.3)
-
-    if results[0] is None:
-        return None, None
-
-    top_conf    = results[0][:, 4]
-    top_boxes   = results[0][:, :4]
-
-    return top_conf, top_boxes
 
 
 if __name__ == '__main__':

@@ -16,6 +16,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 from centernet_utils import get_res
 from centernet_model import centernet
 
+
 ### 读取fits文件，只保留两维数据
 def load_fits_file(file_name, reverse_flag=False):
 
