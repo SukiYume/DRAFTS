@@ -81,6 +81,12 @@ To install the required packages, run
 pip install -r requirements.txt
 ```
 
+## <div align="center">Search in Real Observation Data</div>
+
+If you have a complete FAST observation data, you can refer to `d-center-main.py` and `d-resnet-main.py` for burst search, modify the `data path` and `save path`, and run the file.
+
+Since I don't want this project to rely on too many bulky additional packages (such as `psrchive`), the current search program can only automatically adapt to FAST and GBT observation data. If you have data from other telescopes, you can modify the `load_fits_file` function and other functions related to data reading to realize different forms of data reading for search, which should not be difficult.
+
 
 ## <div align="center">Other</div>
 
