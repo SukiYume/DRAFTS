@@ -148,7 +148,7 @@ if __name__ == '__main__':
         if raw_data.shape[0]  < comb_file * file_leng:
             raw_data          = np.append(raw_data, np.random.rand(comb_file * file_leng - raw_data.shape[0], 2, freq_reso) * np.std(raw_data) + np.mean(raw_data), axis=0)
         raw_data              = np.mean(raw_data.reshape(comb_file * file_leng // down_time_rate, down_time_rate, 2, freq_reso//down_freq_rate, down_freq_rate), axis=(1, 2, 4)).astype(np.float32)
-        raw_data              = raw_data / np.mean(raw_data, axis=0)
+        # raw_data              = raw_data / np.mean(raw_data, axis=0)
 
         print('done load file')
         ### time delay correct
@@ -178,6 +178,7 @@ if __name__ == '__main__':
                         DM = (left_y + right_y) / 2 * (DM_range / 512)
                         dm_flag = True if DM > 20 else False
                         cv2.rectangle(img, (left_x, left_y), (right_x, right_y), (0, 220, 0), 1)
+                        print(top_conf, DM)
 
                     if dm_flag:
                         # data_slice = new_data[k, :, j * block_size: (j + 1) * block_size]
@@ -199,6 +200,8 @@ if __name__ == '__main__':
 
                         plt.figure(figsize=(5, 4))
                         plt.imshow(new_data.T, aspect='auto', origin='lower', cmap='mako', vmin=vmin, vmax=vmax)
+                        plt.yticks(np.linspace(0, 512, 6), np.linspace(1000, 1500, 6).astype(np.int64))
+                        plt.xticks(np.linspace(0, 512, 5), np.round(np.linspace(0, 512, 5)*time_reso*down_time_rate*4*1e3, 2))
                         plt.xlabel('Time (ms)')
                         plt.ylabel('Frequency (MHz)')
                         plt.savefig('{}{}-TS{:0>2d}-FS{}-Burst.jpg'.format(save_path, filename, j, k), dpi=300, bbox_inches='tight')
