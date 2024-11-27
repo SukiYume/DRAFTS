@@ -200,7 +200,7 @@ if __name__ == '__main__':
 
                         plt.figure(figsize=(5, 4))
                         plt.imshow(new_data.T, aspect='auto', origin='lower', cmap='mako', vmin=vmin, vmax=vmax)
-                        plt.yticks(np.linspace(0, 512, 6), np.linspace(1000, 1500, 6).astype(np.int64))
+                        plt.yticks(np.linspace(0, 512, 6), np.round(np.linspace(freq.min(), freq.max(), 6)).astype(np.int64))
                         plt.xticks(np.linspace(0, 512, 5), np.round(np.linspace(0, 512, 5)*time_reso*down_time_rate*4*1e3, 2))
                         plt.xlabel('Time (ms)')
                         plt.ylabel('Frequency (MHz)')
