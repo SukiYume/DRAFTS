@@ -111,7 +111,7 @@ if __name__ == '__main__':
     ## 载入模型
     base_model    = 'resnet18'
     model         = centernet(model_name=base_model).to(device)
-    model.load_state_dict(torch.load('./cent_resnet18.pth', map_location=device))
+    model.load_state_dict(torch.load('./cent_resnet18.pth', map_location=device, weights_only=True))
     model.eval()
 
     data_path     = './'
