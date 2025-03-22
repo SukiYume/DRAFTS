@@ -2,93 +2,126 @@
 
 <div align="center">
 
-_✨ Deep learning-based RAdio Fast Transient Search pipeline✨_
+✨ **Deep learning-based RAdio Fast Transient Search pipeline** ✨
 
-<img src="https://counter.seku.su/cmoe?name=APOD&theme=r34" /><br>
+[![TransientSearch](https://img.shields.io/badge/TransientSearch-DRAFTS-da282a)](https://github.com/SukiYume/DRAFTS)
+[![GitHub Stars](https://img.shields.io/github/stars/SukiYume/DRAFTS.svg?label=Stars&logo=github)](https://github.com/SukiYume/DRAFTS/stargazers)
+[![arXiv](https://img.shields.io/badge/arXiv-2410.03200-b31b1b.svg)](https://arxiv.org/abs/2410.03200)
+[![Python](https://img.shields.io/badge/Python-3.6+-blue.svg)](https://www.python.org/)
+
+[Description](#description) • 
+[Installation](#installation) • 
+[Usage](#usage) • 
+[Models](#models) • 
+[Performance](#performance) • 
+[Real Data Search](#search-in-real-observation-data) • 
+[Contributing](#contributing)
 
 </div>
 
-<p align="center">
-  <a href="https://github.com/SukiYume/DRAFTS">
-    <img src="https://img.shields.io/badge/TransientSearch-DRAFTS-da282a" alt="release">
-  </a>
-  <a href="https://github.com/SukiYume/DRAFTS/stargazers">
-    <img src="https://img.shields.io/github/stars/SukiYume/DRAFTS.svg?label=Stars&logo=github" alt="release">
-  </a>
-</p>
-
-
-## <div align="center">Description</div>
-
-<p align="center">
-  <b>Paper Link - <a href="https://arxiv.org/abs/2410.03200" style="color:teal;">DRAFTS: A Deep Learning-Based Radio Fast Transient Search Pipeline, arXiv:2410.03200</a></b>
-</p>
-
-
 ![DRAFTS WorkFlow](./WorkFlow.png)
 
-> Traditional single-pulse search techniques, such as Presto and Hemidall, suffer a series of challenges, including intricate installation procedures, sluggish execution, incomplete outcomes, and a reliance on human result verification.
+## Description
 
-> We devised a Deep learning-based RAdio Fast Transient Search pipeline (DRAFTS) to address the aforementioned concerns. This pipeline contains: a. CUDA accelerated de-dispersion, b. Object detection model extracts TOA and DM of FRB signal, c. The binary classification model checks the authenticity of the candidate signal. Above figure shows the workflow of DRAFTS.
+**DRAFTS** is a Deep learning-based RAdio Fast Transient Search pipeline designed to address limitations in traditional single-pulse search techniques like Presto and Heimdall.
 
-> All the code implementation is written with Python, thereby facilitating straightforward installation on any operating system. Testing on real data from FAST, real-time searching can be achieved on an RTX 2070S graphics card. Compared to Hemidall, it almost doubled the detection number of bursts. The classification model achieves an accuracy exceeding 99% on FAST and GBT data, thereby significantly reducing the reliance on manual inspection for search results.
+Traditional methods often face challenges including:
+- Complex installation procedures
+- Slow execution speeds
+- Incomplete search results
+- Heavy reliance on manual verification
 
-## <div align="center">Usage</div>
+Our pipeline offers three key components:
+1. **CUDA-accelerated de-dispersion** for faster processing
+2. **Object detection model** to extract Time of Arrival (TOA) and Dispersion Measure (DM) of FRB signals
+3. **Binary classification model** to verify candidate signal authenticity
 
-The training code for our object detection and classification models is contained in the `BinaryClass` and `ObjectDet` folders. Training data and pre-trained models are available on HuggingFace [DRAFTS-Data](https://huggingface.co/datasets/TorchLight/DRAFTS) and [DRAFTS-Model](https://huggingface.co/TorchLight/DRAFTS).
+**Key advantages:**
+- Written entirely in Python for easy cross-platform installation
+- Achieves real-time searching on consumer GPUs (tested on RTX 2070S)
+- Nearly doubles burst detection compared to Heimdall
+- Classification accuracy exceeding 99% on FAST and GBT data
+- Significantly reduces manual verification requirements
 
-The required packages are listed in the `requirements.txt` file.
+📄 **Publication:** [DRAFTS: A Deep Learning-Based Radio Fast Transient Search Pipeline (arXiv:2410.03200)](https://arxiv.org/abs/2410.03200)
 
+## Installation
 
-### Object Detection
-
-For the object detection model, download the data into the `ObjectDet/Data` folder. Place the label file `data_label.txt` in the same directory as `centernet_train.py`. Execute the following command to start training the CenterNet model with ResNet18 as the backbone. To train the model with ResNet50 as the backbone, replace `resnet18` with `resnet50`.
-
-```bash
-python centernet_train.py resnet18
-```
-
-
-### Binary Classification
-
-For the classification model, download the data into the `BinaryClass/Data` folder. The data should be divided into `True` and `False` subfolders within this directory. Execute the following command to start training the classification model with ResNet18 as the backbone. To train the model with ResNet50 as the backbone, replace `resnet18` with `resnet50`.
-
-```bash
-python binary_train.py resnet18 BinaryNet
-```
-
-In `binary_model.py`, we also constructed a classification model that supports arbitrary image sizes using `SpatialPyramidPool2D`. To train this model, execute the following command
-
-```bash
-python binary_train.py resnet18 SPPResNet
-```
-
-
-### Check Performance
-
-To evaluate the performance of the models, we use the [FAST-FREX](https://doi.org/10.57760/sciencedb.15070) independent dataset. Place all `FITS` files from FAST-FREX into the `CheckRes/RawData/Data` folder. Place the trained model checkpoints in the same directory as the Python files.
-
-Execute the respective scripts to evaluate the performance of the classification models (files with ddmt in their names) and object detection models (files with cent in their names) under ResNet18/50.
-
-Note that the classification model depends on the `binary_model.py` file, and the object detection model depends on the `centernet_utils.py` and `centernet_model.py` files.
-
-
-## <div align="center">Installation</div>
-
-To install the required packages, run
+Install all required dependencies with:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## <div align="center">Search in Real Observation Data</div>
+## Usage
 
-If you have a complete FAST observation data, you can refer to `d-center-main.py` and `d-resnet-main.py` for burst search, modify the `data path` and `save path`, and run the file.
+Training data and pre-trained models are available on HuggingFace:
+- [DRAFTS-Data](https://huggingface.co/datasets/TorchLight/DRAFTS)
+- [DRAFTS-Model](https://huggingface.co/TorchLight/DRAFTS)
 
-Since I don't want this project to rely on too many bulky additional packages (such as `psrchive`), the current search program can only automatically adapt to FAST and GBT observation data. If you have data from other telescopes, you can modify the `load_fits_file` function and other functions related to data reading to realize different forms of data reading for search, which should not be difficult.
+### Models
 
+#### Object Detection
 
-## <div align="center">Other</div>
+The object detection training code is in the `ObjectDet` folder.
 
-Welcome contributions!
+1. Download data to `ObjectDet/Data`
+2. Place `data_label.txt` in the same directory as `centernet_train.py`
+3. Train using:
 
+```bash
+python centernet_train.py resnet18  # Use 'resnet50' for ResNet50 backbone
+```
+
+#### Binary Classification
+
+The classification training code is in the `BinaryClass` folder.
+
+1. Download data to `BinaryClass/Data`
+2. Ensure data is organized in `True` and `False` subfolders
+3. Train standard model:
+
+```bash
+python binary_train.py resnet18 BinaryNet  # Use 'resnet50' for ResNet50 backbone
+```
+
+4. Train with arbitrary image size support using `SpatialPyramidPool2D`:
+
+```bash
+python binary_train.py resnet18 SPPResNet
+```
+
+### Performance
+
+To evaluate model performance:
+
+1. Use the [FAST-FREX](https://doi.org/10.57760/sciencedb.15070) independent dataset
+2. Place FITS files in `CheckRes/RawData/Data`
+3. Place trained model checkpoints in the same directory as the Python files
+4. Run evaluation scripts:
+   - Files with `ddmt` for classification models
+   - Files with `cent` for object detection models
+
+**Dependencies:**
+- Classification models depend on `binary_model.py`
+- Object detection models depend on `centernet_utils.py` and `centernet_model.py`
+
+## Search in Real Observation Data
+
+For complete FAST observation data:
+
+1. Refer to `d-center-main.py` and `d-resnet-main.py`
+2. Modify the `data path` and `save path`
+3. Run the file
+
+**Note:** The current search program automatically adapts to FAST and GBT observation data. For other telescopes, modify the `load_fits_file` function and related data reading functions.
+
+## Contributing
+
+Contributions to DRAFTS are welcome! Please feel free to submit issues or pull requests.
+
+---
+
+<div align="center">
+  <sub>Searching for cosmic signals 🔭✨📡</sub>
+</div>
