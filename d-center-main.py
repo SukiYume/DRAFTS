@@ -43,6 +43,46 @@ def get_obparams(file_name):
     down_freq_rate = int(freq_reso / 512)
     down_time_rate = int((49.152 * 4 / 1e6) / time_reso)
 
+### 单线ddm
+def d_dm_time_s(data, height, width):
+    new_data                    = np.zeros((3, height, width))
+    freq_index                  = np.append(
+        np.arange(int(10  / 4096 * freq_reso // down_freq_rate), int( 650 / 4096 * freq_reso // down_freq_rate), 1),
+        np.arange(int(820 / 4096 * freq_reso // down_freq_rate), int(4050 / 4096 * freq_reso // down_freq_rate), 1)
+    )
+    for DM in range(0, height, 1):
+        dds                     = (4.15 * DM * (freq**-2 - freq.max()**-2) * 1e3 / time_reso / down_time_rate).astype(np.int64)
+        time_series             = np.zeros(width)
+        for i in range(0, len(freq_index), 1):
+            i                   = freq_index[i]
+            time_series        += data[dds[i]: dds[i] + width, i]
+            if i == 256:
+                new_data[1, DM] = time_series
+        new_data[0, DM]         = time_series
+        new_data[2, DM]         = time_series - new_data[1, DM]
+    return new_data
+
+### 多线ddm
+@njit(parallel=True)
+def d_dm_time_m(data, height, width):
+    new_data                    = np.zeros((3, height, width))
+    freq_index                  = np.append(
+        np.arange(int(10  / 4096 * freq_reso // down_freq_rate), int( 650 / 4096 * freq_reso // down_freq_rate), 1),
+        np.arange(int(820 / 4096 * freq_reso // down_freq_rate), int(4050 / 4096 * freq_reso // down_freq_rate), 1)
+    )
+    for DM in prange(0, height, 1):
+        dds                     = (4.15 * DM * (freq ** -2 - freq.max() ** -2) * 1e3 / time_reso / down_time_rate).astype(np.int64)
+        time_series             = np.zeros(width)
+        for i in prange(0, len(freq_index), 1):
+            i                   = freq_index[i]
+            time_series        += data[dds[i]: dds[i] + width, i]
+            if i == int(freq_reso // 2):
+                new_data[1, DM] = time_series
+        new_data[0, DM]         = time_series
+        new_data[2, DM]         = time_series - new_data[1, DM]
+    return new_data
+
+
 
 ### 显卡ddm
 @cuda.jit
