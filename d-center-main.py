@@ -43,6 +43,7 @@ def get_obparams(file_name):
     down_freq_rate = int(freq_reso / 512)
     down_time_rate = int((49.152 * 4 / 1e6) / time_reso)
 
+
 ### 单线ddm
 def d_dm_time_s(data, height, width):
     new_data                    = np.zeros((3, height, width))
@@ -61,6 +62,7 @@ def d_dm_time_s(data, height, width):
         new_data[0, DM]         = time_series
         new_data[2, DM]         = time_series - new_data[1, DM]
     return new_data
+
 
 ### 多线ddm
 @njit(parallel=True)
@@ -81,7 +83,6 @@ def d_dm_time_m(data, height, width):
         new_data[0, DM]         = time_series
         new_data[2, DM]         = time_series - new_data[1, DM]
     return new_data
-
 
 
 ### 显卡ddm
