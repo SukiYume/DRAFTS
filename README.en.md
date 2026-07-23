@@ -20,8 +20,7 @@ The original DRAFTS publication and public assets are available here:
 | `object_detection/` | Train and evaluate the current CenterNet detector. |
 | `binary_classification/` | Train and evaluate ConvNeXt binary candidate filters. |
 | `runcode/` | Deployable real-observation search entry points and benchmark tools. |
-| `injection_experiment/` | Generate raw8/packed2 injections, launch searches, match truth, aggregate metrics, and build paper figures. |
-| `output/` | Local review outputs. Only its documentation is versioned. |
+| `injection_experiment/` | Generate raw8/packed2 injections, launch searches, match truth, aggregate metrics, and run the PRESTO baseline. |
 
 The previous `BinaryClass`, `ObjectDet`, `RunCode`, and `CheckRes` layout has
 been replaced by these lowercase workflow directories. Runtime imports and
@@ -42,14 +41,14 @@ Conda/PyTorch commands documented in `runcode/requirements.txt`.
 
 ## Data and model policy
 
-Git tracks source code, shell entry points, documentation, manuscript sources,
-lightweight configuration, and compact evaluation summaries. It deliberately
-does not track:
+Git tracks source code, shell entry points, documentation, lightweight
+configuration, and compact training summaries. It deliberately does not track:
 
 - raw FITS observations or generated H5/NumPy datasets;
 - model checkpoints and exported runtimes;
 - training logs, search outputs, batch state, or reproducible result tables;
-- locally fetched literature full text or LaTeX build products.
+- retired implementations, local resolution studies, manuscript material, or
+  literature notes.
 
 Download published data and models from the links above, or place local
 artifacts in the paths documented by each workflow README. The ignore rules

@@ -257,7 +257,7 @@ python c-manifest-summary.py \
 cut_toa_sec = (signal_mjd - obs_start_mjd) * 86400.0
 ```
 
-生产运行建议写到独立运行目录，不要把新输出混入 `../output/search/` 的样例目录。
+生产运行应写到仓库之外的独立运行目录，不要把搜索输出混入代码目录。
 
 ## Fixed-DM Follow-up
 

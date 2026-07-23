@@ -51,21 +51,19 @@ wandb/
 checkpoints/
 shards_*/
 
-# Reproducible experiment products
-/output/*
-!/output/README.md
+# Local-only or retired code/results
+/runcode/legacy/
+/binary_classification/resolution_eval_*/
+/output/
+
+# Injection repository boundary: keep only the experiment/runtime code
+/injection_experiment/aastex702/
+/injection_experiment/code_paper/
+/injection_experiment/notes/
 /injection_experiment/results/
 /injection_experiment/runs/
-/injection_experiment/code_paper/results*/
-/injection_experiment/code_paper/figures/
-/binary_classification/resolution_eval_*/full_*/metrics_*
-/binary_classification/resolution_eval_*/full_*/predictions_*
 
-# Locally fetched literature text; keep metadata, BibTeX, and summaries
-/injection_experiment/notes/references/**/full_text.txt
-/injection_experiment/notes/references/**/*.pdf
-
-# LaTeX build products. Manuscript figures remain versioned.
+# LaTeX build products
 *.aux
 *.bbl
 *.blg
@@ -75,4 +73,3 @@ shards_*/
 *.synctex.gz
 *.toc
 *.pdf
-!/injection_experiment/aastex702/figures/*.pdf

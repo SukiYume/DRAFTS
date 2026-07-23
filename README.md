@@ -15,7 +15,6 @@
   -> binary_classification/      训练二分类过滤器
   -> runcode/                    真实观测搜索入口
   -> injection_experiment/       注入信号后评估召回、误报和量化影响
-  -> output/                     搜索样例和 binary 对比产物
 ```
 
 ## 子目录
@@ -26,8 +25,7 @@
 | `object_detection/` | 当前检测器训练目录，仅保留 CenterNet 线。脚本包括 `centernet_train.py`、`centernet_data.py`、`centernet_model.py`、`centernet_eval.py`、`centernet_infer.py`。当前本地保留 `logs_v10/` 和 `Data/`。 |
 | `binary_classification/` | ConvNeXt/SPPConvNeXt 二分类过滤器训练和推理。真实搜索部署默认偏向 `convnext_small` 以保 recall。 |
 | `runcode/` | 真实数据 DRAFTS 搜索入口，可独立拷到服务器运行。包含未知 DM 盲搜、fixed-DM follow-up、PBS 提交、后端 benchmark 和运行时模型定义。 |
-| `injection_experiment/` | 注入评估主线：生成 raw8/packed2 FITS、调用 `search_runtime/` 搜索、匹配 truth、汇总指标并生成论文图。当前保留 v10/1024-ds2 结果。 |
-| `output/` | 真实搜索样例输出和 binary 模型输出对比，不放代码或权重。 |
+| `injection_experiment/` | 注入评估主线：生成 raw8/packed2 FITS、调用 `search_runtime/` 搜索、匹配 truth、汇总指标，并运行 PRESTO 对照。该目录只追踪实验代码和必要说明。 |
 
 `bslocate/` 在上一级，保存旧版 YOLO 定位实验；当前 DRAFTS 主线使用 CenterNet 检测器。
 
@@ -113,21 +111,13 @@ runcode/models/binary_best_model_conv_tiny_ema.pth
 |---|---|
 | `inject_fits.py` | 把模拟 FRB 注入真实 FAST 背景，输出 raw8；可同时生成 packed2。 |
 | `run_injection_campaign.py` | 批量生成、搜索、分析和聚合的总调度。支持 generate-only、search-only 和 raw8/packed2 并行搜索。 |
-| `launch_v8_injection_campaign.sh` | 旧的默认启动脚本，仍可作为环境变量和参数写法参考。 |
+| `run_v10_search_1024ds2.sh` | 当前 v10/1024-ds2 远端搜索入口。 |
 | `analyze_search_results.py` | 把 truth 与 candidate manifest 匹配，输出召回、误报和参数分箱结果。 |
 | `aggregate_campaign_results.py` | 汇总多个 batch 的 analysis 结果。 |
-| `plot_publication_performance.py` | 从结果目录生成 publication figures。 |
 | `search_runtime/` | 注入实验专用搜索 runtime，包含精简版 gate/core、模型定义和权重占位说明。 |
+| `presto_runtime/` | PRESTO blind-search 基线和阈值分析代码。 |
 
-当前本地保留的结果目录：
-
-```text
-injection_experiment/results/pg13_v10_1024ds2_20260629_1351/
-```
-
-该结果使用 `object_best_model_centernet_conv_tiny_ema_v10.pth`、`binary_best_model_conv_small_ema.pth`、`class_block_size=1024`、`class_time_downsample=2`，并已生成 analysis、aggregate 和 publication figures。`publication_figures/run_summary.json` 记录了 10,000 个 truth source、20,000 个 raw8/packed2 matches、351 个 false positives、64 张图。
-
-详细运行模式、权重放置、search-only 复跑和分析/画图命令见 `injection_experiment/README.md`。
+详细运行模式、权重放置、search-only 复跑和分析命令见 `injection_experiment/README.md`。
 
 复用旧 campaign 的搜索结果时参考：
 
@@ -160,7 +150,6 @@ python run_injection_campaign.py \
 | 训练或复查当前 CenterNet 检测器 | `object_detection/` |
 | 训练 binary 过滤器 | `binary_classification/` |
 | 在真实 FAST 数据上搜索 | `runcode/` |
-| 复查搜索样例输出或 binary 对比图 | `output/` |
 | 跑 raw8/packed2 注入评估 | `injection_experiment/` |
 
 ## 输出和权重约定
@@ -169,17 +158,16 @@ python run_injection_campaign.py \
 - `object_detection/logs_v10/`、`binary_classification/logs/` 是训练产物位置。
 - `runcode/models/` 是真实搜索部署权重位置。
 - `injection_experiment/search_runtime/models/` 不随仓库带权重，运行前按 `PUT_WEIGHTS_HERE.txt` 放入对应 `.pth`。
-- `injection_experiment/results/` 保存可分享的评估结果和论文图。
-- `output/` 只放真实搜索样例和对比产物，不放训练日志或 checkpoint。
+- 注入结果、搜索结果和对比图保存在本地或远端运行目录，不进入仓库。
 
 ## Git 追踪边界
 
-仓库追踪代码、脚本、README、论文源文件、轻量配置和小型评估摘要。以下内容保留在本地或服务器，不进入 Git：
+仓库追踪代码、脚本、README、轻量配置和小型训练摘要。以下内容保留在本地或服务器，不进入 Git：
 
 - FITS 原始观测、H5/NumPy 训练数据；
 - `.pth`、`.pt`、`.ckpt` 等模型权重；
 - 训练日志、批处理状态、搜索输出和可重新生成的结果表；
-- 本地抓取的文献全文与 LaTeX 编译产物。
+- 退役实现、本地 resolution 评估、论文材料和文献笔记。
 
 公开训练数据和模型分别存放在
 [Hugging Face 数据集](https://huggingface.co/datasets/TorchLight/DRAFTS) 与

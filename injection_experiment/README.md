@@ -1,6 +1,6 @@
 # 注入实验目录
 
-本目录用于评估 DRAFTS 搜索链路：把模拟 FRB 注入真实 FAST 背景，生成 raw8/packed2 FITS，调用搜索 runtime，匹配 truth manifest，汇总召回、误报和量化影响，并生成论文图。
+本目录用于评估 DRAFTS 搜索链路：把模拟 FRB 注入真实 FAST 背景，生成 raw8/packed2 FITS，调用搜索 runtime，匹配 truth manifest，并汇总召回、误报和量化影响。
 
 ## 流程
 
@@ -157,11 +157,10 @@ python aggregate_campaign_results.py \
   --output-dir /path/to/runs/<run_label>/aggregate
 ```
 
-论文图的重画脚本和文章相关中间文件在 `code_paper/` 内维护；本次 runtime 清理不移动或改写这些文件。
-
 ## 维护规则
 
 - 注入 FITS 体积很大。只有需要复用同一批注入数据做模型对比时才使用 `--keep-injected-fits`。
 - `--search-only` 依赖 `simdata/` 和 `truth_archive/` 中已有的注入数据；换 `--run-label` 前先确认对应 campaign 已生成。
 - `--overwrite-search` 只用于替换搜索、分析和汇总产物；它不负责重新生成注入 truth。
-- `results/` 只保存经过整理的评估结果和论文图，长期结论应写回 README 或论文说明，不依赖目录名记忆。
+- 仓库只追踪注入、搜索、分析、聚合和 PRESTO 对照代码，以及必要的 README 和权重占位说明。
+- `results/`、论文材料和实验笔记保留在本地或专门的研究目录，不进入本仓库。
