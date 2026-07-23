@@ -1,4 +1,4 @@
-# PRESTO blind single-pulse baseline
+# DRAFTS PRESTO blind single-pulse baseline
 
 This directory contains the PRESTO baseline for the injection experiment.  The
 formal recall/precision figures use a blind DM search, not truth-DM windows.
@@ -14,6 +14,23 @@ truth manifests live in the experiment-level `truth_archive/` directory.  DL
 | `export_presto_threshold_package.py` | Export a compact local threshold-sweep package from the full event table. |
 | `presto_threshold_sweep.py` | Recompute metrics and figures for sigma thresholds from the compact package. |
 | `presto_common.py` | Shared parameter bins, truth/event matching, CSV helpers, and the only PRESTO plotting implementation. |
+
+## Requirements
+
+Run this workflow in an environment where PRESTO is installed and the following
+commands are available on `PATH`:
+
+```text
+rfifind
+prepsubband
+single_pulse_search.py
+```
+
+Install the DRAFTS Python dependencies from the repository root. The campaign
+also needs a writable scratch directory with enough space for temporary
+`.dat`, `.inf`, mask, and single-pulse products. Use `--scratch-root` or the
+`PRESTO_SCRATCH_ROOT` environment variable to place those files on suitable
+local storage.
 
 ## PRESTO command pattern
 
@@ -46,12 +63,12 @@ By default the script keeps only event-level JSONL files.  Raw PRESTO
 `.singlepulse` candidate rows can be very large at `-t 3.0`; use
 `--keep-candidates` only for focused debugging.
 
-## Full Run on pg14
+## Full blind-search run
 
 Run the full blind baseline directly through the Python entrypoint:
 
 ```bash
-cd /path/to/drafts_runs/injection_experiment/presto_runtime
+cd DRAFTS/injection_experiment/presto_runtime
 source /path/to/miniforge3/etc/profile.d/conda.sh
 conda activate presto_gpu
 
@@ -60,8 +77,8 @@ OUT_ROOT="${OUT_ROOT:-$PWD/results/presto_blind_full_$STAMP}"
 mkdir -p logs
 
 python presto_blind_campaign.py \
-  --sim-root /path/to/drafts_runs/injection_experiment/simdata \
-  --truth-root /path/to/drafts_runs/injection_experiment/truth_archive \
+  --sim-root ../simdata \
+  --truth-root ../truth_archive \
   --output-root "$OUT_ROOT" \
   --scratch-root "${SCRATCH_ROOT:-/path/to/presto_scratch}" \
   --mode blind \
@@ -100,7 +117,38 @@ Key outputs:
 - `aggregate/all_false_positives.csv`
 - `aggregate/all_events.csv`
 - `events/<quantization>/bXX/*.jsonl`
-- `analysis_fast/cells_*.csv`
-- `publication_figures_fast/parameter_maps/*_recall_precision.png`
-- `publication_figures_fast/summary/snr_recall_precision.png`
-- `threshold_sweep_package/*`
+- `analysis/cells_*.csv`
+- `publication_figures/parameter_maps/*_recall_precision.png`
+- `publication_figures/summary/snr_recall_precision.png`
+- `run_summary.json`
+
+## Export and sweep sigma thresholds
+
+The full campaign does not create a threshold-sweep package automatically.
+Export a compact package from a completed result root:
+
+```bash
+python export_presto_threshold_package.py \
+  --result-root "$OUT_ROOT" \
+  --output-dir "$OUT_ROOT/threshold_sweep_package" \
+  --source-dm-tolerance 60 \
+  --source-time-tolerance-ms 30
+```
+
+The package contains slim truth rows, near-truth events, false-positive
+histograms, and metadata. Recompute metrics and figures without rerunning
+PRESTO:
+
+```bash
+python presto_threshold_sweep.py \
+  --package-dir "$OUT_ROOT/threshold_sweep_package" \
+  --output-dir "$OUT_ROOT/threshold_sweeps" \
+  --thresholds 3,5,7 \
+  --source-dm-tolerance 60 \
+  --source-time-tolerance-ms 30 \
+  --localize-dm-tolerance 25 \
+  --localize-time-tolerance-ms 30
+```
+
+Use a new `--output-dir` when comparing threshold grids so one sweep does not
+overwrite another.

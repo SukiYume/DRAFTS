@@ -1,4 +1,4 @@
-# CenterNet 训练 H5 生成目录
+# DRAFTS CenterNet 训练 H5 生成
 
 本目录把真实 FAST 背景数据和模拟 FRB 注入结合起来，生成 `object_detection/` 可直接读取的 CenterNet 训练 H5。当前主线是 multifitting 风格模拟信号、0-4096 DM 画布、512 x 512 time-DM 图像和最多 3 个目标框。
 
@@ -6,7 +6,7 @@
 
 | 路径 | 用途 |
 | --- | --- |
-| `generate_multifit_time_dm_h5.py` | 主生成器。读取背景 FITS，注入模拟 FRB，做消色散和裁切，写 H5、配置、metadata 和 COCO 风格标注。 |
+| `generate_multifit_time_dm_h5.py` | 主生成器。读取背景 FITS，注入模拟 FRB，做消色散和裁切，写 H5、配置、metadata 和逐图 bounding-box 标注。 |
 | `launch_shards_50000.sh` | 当前批量入口。默认生成 50,000 个 unique signals，每个信号 4 个 crop，合并成约 200,000 张训练图。 |
 | `merge_time_dm_h5.py` | 合并 shard H5，并同步生成合并后的 annotation/config/metadata/inspect 文件。 |
 | `inspect_time_dm_h5.py` | 快速检查 H5 内容，输出 JSON 摘要和 contact sheet。 |
@@ -79,7 +79,7 @@
 ## 生成完整训练集
 
 ```bash
-cd bssearch/generate_burst
+cd DRAFTS/generate_burst
 RAW_DIR=/path/to/rawdata \
 PY=/path/to/miniconda3/bin/python \
 SHARDS_PER_WAVE=4 \
@@ -93,21 +93,25 @@ SHARDS_PER_WAVE=4 \
 | 文件 | 说明 |
 | --- | --- |
 | `centernet_dataset_sim50000_max3.h5` | 合并后的训练 H5。 |
-| `centernet_dataset_sim50000_max3_annotations.json` | 训练标注。 |
-| `centernet_dataset_sim50000_max3.h5.config.json` | 生成参数。 |
-| `centernet_dataset_sim50000_max3.h5.metadata.jsonl` | 每张图的来源、注入和裁切信息。 |
+| `centernet_dataset_sim50000_max3_annotations.json` | 从 H5 导出的逐图 bounding-box JSON，便于独立检查。 |
+| `centernet_dataset_sim50000_max3.config.json` | 生成和合并参数。 |
+| `centernet_dataset_sim50000_max3.metadata.jsonl` | 每张图的来源、注入和裁切信息。 |
 | `centernet_dataset_sim50000_max3.inspect.json` | 抽样检查摘要。 |
+| `centernet_dataset_sim50000_max3_visual_inspect.json` | contact-sheet 抽样所用帧及其统计。 |
 | `centernet_dataset_sim50000_max3_contact.png` | 可视化 contact sheet。 |
-| `shards_50000/logs/` | shard 生成日志和 merge/inspect 日志。 |
+| `centernet_dataset_sim50000_max3.merge.log` | shard 合并日志。 |
+| `shards_50000/shard_*.h5` / `shard_*.log` | 合并前的 shard 数据和各 shard 运行日志。 |
 
-生成完成后，把 H5 和标注复制到 `../object_detection/Data/`，再进入 `../object_detection/` 训练检测器。
+生成完成后，把 H5 复制到 `../object_detection/Data/`，再进入
+`../object_detection/` 训练检测器。训练代码直接读取 H5 内的 `annotations`；
+外部 `_annotations.json` 只用于独立检查，不是训练必需文件。
 
 ## 小规模检查
 
 先用 dry-run 确认参数、输入文件和输出路径：
 
 ```bash
-cd bssearch/generate_burst
+cd DRAFTS/generate_burst
 python generate_multifit_time_dm_h5.py \
   --rawdata-dir ./rawdata \
   --output ./test_multifit.h5 \
@@ -132,8 +136,8 @@ python generate_multifit_time_dm_h5.py \
 
 ```bash
 python inspect_time_dm_h5.py \
-  --input ./test_multifit.h5 \
-  --output-json ./test_multifit.inspect.json \
+  ./test_multifit.h5 \
+  --json ./test_multifit.inspect.json \
   --contact-sheet ./test_multifit_contact.png
 ```
 
@@ -142,10 +146,12 @@ python inspect_time_dm_h5.py \
 主 H5 中保留训练需要的图像和标注字段：
 
 - `images`：512 x 512 time-DM 图像。
-- `annotations`：目标框、类别、DM/time 位置和来源信息。
+- `annotations`：形状为 `(M, 5)`；每行依次是
+  `image_index, left, top, width, height`。
 - `original_filename`、`original_path`、`original_slice`：背景文件和切片来源。
 
-配套 JSON/JSONL 保存完整参数和逐图 metadata，复查训练数据时优先看这些文件。
+类别、DM/time 位置、信号物理参数和背景来源等扩展信息保存在配套
+JSON/JSONL 中；复查训练数据时优先结合 metadata 和 contact sheet。
 
 ## 运行注意事项
 

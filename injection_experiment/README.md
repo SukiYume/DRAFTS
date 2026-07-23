@@ -1,4 +1,4 @@
-# 注入实验目录
+# DRAFTS 注入实验
 
 本目录用于评估 DRAFTS 搜索链路：把模拟 FRB 注入真实 FAST 背景，生成 raw8/packed2 FITS，调用搜索 runtime，匹配 truth manifest，并汇总召回、误报和量化影响。
 
@@ -24,13 +24,12 @@ inject_fits.py
 | `launch_search.py` | 单 batch 搜索封装，调用 `search_runtime/`。 |
 | `analyze_search_results.py` | 读取 truth 与候选表，做 source/event 匹配和误报统计。 |
 | `aggregate_campaign_results.py` | 汇总多个 batch 的分析结果。 |
-| `run_v10_search_1024ds2.sh` | 远端 v10 + `det_prob=0.3` 搜索入口，默认复用现有 20 批注入数据，并使用 `class_block_size=1024` 与 2 倍 time downsample。 |
+| `run_v10_search_1024ds2.sh` | v10 + `det_prob=0.3` 参考搜索入口，默认复用 20 批注入数据，并使用 `class_block_size=1024` 与 2 倍 time downsample。 |
 | `search_runtime/` | 搜索运行时副本。运行前需要把检测器和 binary 分类器权重放入 `search_runtime/models/`。 |
 | `presto_runtime/` | PRESTO blind-search 基线、快速汇总和阈值重画脚本。 |
-| `simdata/` | 仅远端长期保留的大体积 raw8/packed2 注入 FITS，DL 和 PRESTO 共用。 |
-| `truth_archive/` | 每个 batch/量化版本的 `truth_manifest.jsonl` 和 `run_config.json` 归档，DL 和 PRESTO 共用。 |
-| `runs/` | 仅保存 DL 搜索、分析、汇总和日志；不再放大体积注入 FITS。 |
-| `logs/` / `results/` | 远端可额外保存任务日志和整理后的结果包；本地目录不保存正式结果包。 |
+| `simdata/` | 运行时生成的大体积 raw8/packed2 注入 FITS，供 DL 和 PRESTO 共用。 |
+| `truth_archive/` | 每个 batch/量化版本的 `truth_manifest.jsonl` 和 `run_config.json`，供 DL 和 PRESTO 共用。 |
+| `runs/` | DL 搜索、分析、汇总和日志目录；大体积注入 FITS 与其分开保存。 |
 
 ## 注入信号模型
 
@@ -74,7 +73,9 @@ inject_fits.py
 - `--classifier-ckpt models/binary_best_model_conv_small_ema.pth`
 - `--classifier-model-name convnext_small`
 
-当前保留的 v10/1024-ds2 结果使用 `object_best_model_centernet_conv_tiny_ema_v10.pth` 和 `binary_best_model_conv_small_ema.pth`。
+本文给出的 v10/1024-ds2 参考基线使用
+`object_best_model_centernet_conv_tiny_ema_v10.pth` 和
+`binary_best_model_conv_small_ema.pth`。
 
 两份默认权重可从
 [DRAFTS model repository](https://huggingface.co/TorchLight/DRAFTS) 下载：
@@ -124,21 +125,22 @@ python inject_fits.py \
 
 ## 复用注入数据重新搜索
 
-当前 v10/1024-ds2 结果对应的搜索配置如下。远端保留的 campaign 目录名为 `v10_det03_injection_10000`。
+下面的命令复现 v10/1024-ds2 参考搜索配置。`run-label` 只是本次 campaign 的标识，
+可以替换成不会与已有结果冲突的名称。
 
 ```bash
-cd /path/to/drafts_runs/injection_experiment
+cd DRAFTS/injection_experiment
 conda activate pytorch
 python run_injection_campaign.py \
-  --work-root /path/to/drafts_runs/injection_experiment/runs \
-  --sim-root /path/to/drafts_runs/injection_experiment/simdata \
-  --truth-root /path/to/drafts_runs/injection_experiment/truth_archive \
+  --work-root /path/to/injection_runs/runs \
+  --sim-root /path/to/injection_runs/simdata \
+  --truth-root /path/to/injection_runs/truth_archive \
   --run-label v10_det03_injection_10000 \
   --batches 20 \
   --count-per-batch 500 \
   --search-only \
   --overwrite-search \
-  --runtime-dir /path/to/drafts_runs/injection_experiment/search_runtime \
+  --runtime-dir ./search_runtime \
   --gpu-num 8 \
   --gpu-ids 0,1,2,3,4,5,6,7 \
   --detector-type centernet_conv_tiny \

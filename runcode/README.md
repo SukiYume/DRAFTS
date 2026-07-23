@@ -30,6 +30,7 @@
 | `t-binary-bench.sh` | fixed-DM binary 模型输出对比。 |
 | `s-pbsspt.py` | PBS 脚本生成、提交和状态查询。 |
 | `c-data-check.py` | 拼接若干 FITS 后画频率时间图，做数据检查。 |
+| `c-manifest-build.py` | 预扫描 CRAFTS 数据根目录，生成 gate 可直接加载的任务 manifest。 |
 | `c-manifest-summary.py` | 汇总各 beam 输出目录下的 `candidate_manifest.jsonl` 为 CSV/JSON。 |
 | `extract_xz.sh` | 批量解压 `.xz` FITS。 |
 | `binary_model.py` | binary 分类器模型定义。 |
@@ -150,10 +151,10 @@ CUDA_VISIBLE_DEVICES=0 python t-blind-section.py \
 | `--dm-range` | 4096 | DM index 数量。 |
 | `--dm-scale` | 1.0 | 每个 DM index 对应的 pc cm^-3 步长。 |
 | `--dm-offset` | 0.0 | DM 起点。 |
-| `--dm-threshold` | 50.0 | 低于该 DM 的候选丢弃。生产 CRAFTS gate 当前显式设为 10。 |
-| `--block-size` | 8192 | 每个时间块的降采样后样本数。生产 CRAFTS gate 当前显式设为 4096。 |
+| `--dm-threshold` | 50.0 | 低于该 DM 的候选丢弃；仓库内 gate 模板显式设为 10。 |
+| `--block-size` | 8192 | 每个时间块的降采样后样本数；仓库内 gate 模板显式设为 4096。 |
 | `--dm-span` | 1024 | 每张检测图覆盖的 DM 点数。 |
-| `--det-prob` | 0.45 | CenterNet 候选阈值。生产 CRAFTS gate 当前显式设为 0.40。 |
+| `--det-prob` | 0.45 | CenterNet 候选阈值；仓库内 gate 模板显式设为 0.40。 |
 | `--time-factor` | 8.0 | FITS 时间降采样率。 |
 
 多 GPU 可以分别提交 `--section 0..gpu_num-1`，或使用 `t-blind-batch.sh`。`--gpu-num` 在这里表示总 section 数，不一定等于物理 GPU 数。
@@ -168,11 +169,12 @@ DM_THRESHOLD=10 BLOCK_SIZE=4096 DM_SPAN=1024 DET_PROB=0.40 \
   bash t-blind-batch.sh /path/to/fast_observation/
 ```
 
-`mu01` 这类 gate 节点不要直接跑 `t-blind-batch.sh`，用 `s-pbsspt.py` 提交 PBS。
+在由 PBS 管理的 gate 节点上，不要直接启动 `t-blind-batch.sh`；应使用
+`s-pbsspt.py` 生成并提交作业。
 
 ### 固定配置 gate
 
-`d-center-binary-gate.py` 底部当前默认：
+`d-center-binary-gate.py` 底部提供一个使用通用占位路径的 CRAFTS 配置模板：
 
 ```python
 process_config = ProcessConfig(
@@ -189,11 +191,25 @@ process_config = ProcessConfig(
 
 data_path = None
 data_paths = [
-    "/path/to/fast_observations/CRAFTS/",
+    "/path/to/CRAFTS/",
 ]
-save_base = "/path/to/drafts_search_output/CRAFTS/"
+task_manifest = "/path/to/observations/CRAFTS/task_manifest_zd202x_1_1_2bit.json"
+save_base = "/path/to/observations/CRAFTS/"
 beam_filter = "all"
 ```
+
+如果 `task_manifest` 指向一个存在的文件，gate 会直接加载预构建任务；否则才扫描
+`data_paths`。大规模目录建议先构建 manifest，减少每个 section 重复扫描文件系统：
+
+```bash
+python c-manifest-build.py \
+  --data-path /path/to/CRAFTS/ \
+  --beam-filter all \
+  --output /path/to/observations/CRAFTS/task_manifest_zd202x_1_1_2bit.json
+```
+
+多个数据根可以重复传入 `--data-path`。生成后把 gate 中的 `task_manifest` 指向该
+JSON；更换数据集时应重新生成，避免继续使用旧任务清单。
 
 直接运行某个 section：
 
@@ -261,7 +277,7 @@ python c-manifest-summary.py \
 cut_toa_sec = (signal_mjd - obs_start_mjd) * 86400.0
 ```
 
-生产运行应写到仓库之外的独立运行目录，不要把搜索输出混入代码目录。
+正式运行应写到仓库之外的独立运行目录，不要把搜索输出混入代码目录。
 
 ## Fixed-DM Follow-up
 
@@ -334,13 +350,13 @@ python c-data-check.py 0
 root_path = "/path/to/runtime/"
 script_name = "d-center-binary-gate.py"
 node_config = {1: 8}        # {节点号: GPU数}
-job_name = "zd2bit"
+job_name = "drafts"
 workers_per_gpu = 4         # 每块 GPU 上并发跑几个 section（1~4）
 ```
 
 `workers_per_gpu > 1` 时，同一次 qsub 只申请 1 块 GPU，脚本内部用后台进程并发跑多个 section
 （各自输出到独立日志文件），共享这一块 GPU。`sum(node_config.values()) * workers_per_gpu`
-必须等于入口脚本中的 `section_num`。当前生产配置是 `8 * 4 = 32`，对应
+必须等于入口脚本中的 `section_num`。仓库内示例配置是 `8 * 4 = 32`，对应
 `d-center-binary-gate.py` 的 `section_num=32`。
 
 常用命令：
@@ -389,7 +405,17 @@ bash t-binary-bench.sh
 bash t-binary-bench.sh --summarize-only
 ```
 
-旧 object benchmark 结论是：在 32 进程并发读同一批 FITS 时端到端主要受 I/O 限制；CuPy 消色散段明显快于 Numba，但总 wall time 不能只看 GPU kernel。
+`t-binary-bench.sh` 是开发用模板，不是开箱即用的生产入口。实际运行前需要编辑脚本
+底部的观测路径和 DM，并准备以下两份与 backbone 匹配的权重：
+
+```text
+models/binary_best_model_conv_tiny_ema.pth
+models/binary_best_model_conv_small_ema.pth
+```
+
+公开的默认部署权重只包含 ConvNeXt-Small；ConvNeXt-Tiny benchmark 需要使用自行训练
+或另行取得的兼容 checkpoint。如果只比较 Small，应删除或注释脚本中的 Tiny 任务。
+benchmark 结果依赖存储、进程并发、FITS 数据布局和 GPU，报告时应同时记录这些条件。
 
 ## 排错
 

@@ -60,13 +60,12 @@ PyTorch 和 torchvision 应使用与目标 GPU/CUDA 环境匹配的版本。
 ```bash
 cd binary_classification
 DATA_PATH=/path/to/binary_h5 \
-MODEL_NAME=convnext_small \
 BATCH_SIZE=32 \
 EPOCHS=50 \
-./train.sh "0,1,2,3"
+./train.sh "0,1,2,3" small
 ```
 
-第二个位置参数也可以直接选择模型别名：
+第二个位置参数是必需的模型别名，可选值包括：
 
 ```bash
 ./train.sh "0,1" small
