@@ -53,8 +53,8 @@ DRAFTS 的核心由三部分组成：
   的接口；
 - **独立注入评估**：支持 raw8 与 packed2 数据生成、真值匹配、召回率/误报率统计和
   PRESTO 基线对照；
-- **大文件分离**：代码与轻量配置进入 Git，数据集、模型权重和运行结果通过外部存储或
-  本地目录管理。
+- **公开资源可用**：训练数据和预训练模型可直接从 Hugging Face 下载，并按各工作流
+  README 的说明部署。
 
 ## DRAFTS 流水线
 
@@ -128,7 +128,7 @@ PyTorch、torchvision 与 CuPy 应根据目标机器的 CUDA 驱动安装。生�
 - [DRAFTS training data](https://huggingface.co/datasets/TorchLight/DRAFTS)
 - [DRAFTS pretrained models](https://huggingface.co/TorchLight/DRAFTS)
 
-下载后的数据和权重应放入对应工作流 README 指定的位置。它们默认不进入 Git。
+下载后的数据和权重应放入对应工作流 README 指定的位置。
 
 ## 模型训练
 
@@ -203,9 +203,8 @@ python runcode/t-blind-section.py \
 
 ## 注入实验
 
-[`injection_experiment/`](injection_experiment/) 是独立的 DRAFTS 注入评估代码区，只
-追踪注入、搜索、分析、聚合和 PRESTO 对照所需代码与必要说明，不包含论文素材、
-文献笔记或运行输出。
+[`injection_experiment/`](injection_experiment/) 用于检验 DRAFTS 在受控注入信号上的
+搜索表现，覆盖信号生成、raw8/packed2 搜索、真值匹配、批次汇总和 PRESTO 基线对照。
 
 主要入口：
 
@@ -240,23 +239,16 @@ python injection_experiment/run_injection_campaign.py \
 权重放置、raw8/packed2 并行搜索、truth matching 容差和 PRESTO 对照见
 [`injection_experiment/README.md`](injection_experiment/README.md)。
 
-## 数据、模型与输出边界
+## 运行结果
 
-Git 追踪：
+不同工作流会产生不同类型的结果：
 
-- Python 与 Shell 源码；
-- README、轻量配置和必要的小型训练摘要；
-- 可复现工作流所需的目录结构和权重占位说明。
+- 模型训练输出 checkpoint、训练日志和验证指标；
+- 真实观测搜索输出候选清单、TOA/DM 估计和诊断图；
+- 注入实验输出 truth matching、召回率、误报率、定位误差和分箱统计。
 
-Git 不追踪：
-
-- 原始 FITS、生成的 H5/NumPy 数据和大体积中间文件；
-- `.pth`、`.pt`、`.ckpt` 等模型权重；
-- 训练日志、搜索输出、注入结果和可重新生成的统计表；
-- 本地 benchmark、退役实现、论文材料和文献笔记。
-
-`.gitignore` 只控制版本追踪，不会删除本地或服务器上的数据。建议每次运行使用独立的
-外部输出目录，并把数据位置通过命令行参数或环境变量传入。
+建议每次运行使用独立的输出目录，并通过命令行参数或环境变量传入数据和结果位置。
+具体文件名与目录结构见各工作流 README。
 
 ## 快速验证
 

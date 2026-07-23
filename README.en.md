@@ -54,8 +54,8 @@ FAST observations, and raw8/packed2 injection evaluation.
 - A two-stage detector/classifier design for localization and verification;
 - Search entry points organized around real FAST observations;
 - Reproducible raw8/packed2 injection campaigns and a PRESTO baseline;
-- Source code and lightweight metadata in Git, with large datasets, weights,
-  and generated results stored separately.
+- Public training data and pretrained models available from Hugging Face, with
+  deployment instructions in each workflow README.
 
 ## DRAFTS pipeline
 
@@ -123,7 +123,6 @@ CUDA driver. Production-search notes are available in
 - [DRAFTS pretrained models](https://huggingface.co/TorchLight/DRAFTS)
 
 Place downloads in the locations documented by the relevant workflow README.
-Large datasets and checkpoints are intentionally excluded from Git.
 
 ## Model training
 
@@ -199,10 +198,10 @@ troubleshooting guide are documented in
 
 ## Injection experiments
 
-[`injection_experiment/`](injection_experiment/) is the code-only DRAFTS
-injection-evaluation area. It contains the injection, search, truth-matching,
-aggregation, and PRESTO comparison code, but no manuscript sources, literature
-notes, or generated campaign output.
+[`injection_experiment/`](injection_experiment/) measures DRAFTS search
+performance on controlled injected signals. It covers signal generation,
+raw8/packed2 searches, truth matching, batch aggregation, and a PRESTO
+baseline.
 
 | Component | Purpose |
 |---|---|
@@ -236,19 +235,19 @@ See [`injection_experiment/README.md`](injection_experiment/README.md) for
 weight placement, raw8/packed2 parallel searches, truth tolerances, and the
 PRESTO baseline.
 
-## Data, model, and output policy
+## Run outputs
 
-Git tracks source code, shell entry points, documentation, lightweight
-configuration, compact training summaries, and placeholder files required to
-preserve runtime layout.
+Each workflow produces a different set of user-facing results:
 
-Git does not track raw FITS observations, generated H5/NumPy datasets, model
-checkpoints, training logs, search outputs, injection results, local
-benchmarks, retired implementations, manuscript material, or literature
-notes.
+- model training writes checkpoints, training logs, and validation metrics;
+- observation searches write candidate manifests, TOA/DM estimates, and
+  diagnostic images;
+- injection campaigns write truth matches, recall, false-positive,
+  localization, and binned performance summaries.
 
-Use command-line arguments or environment variables for machine-specific paths.
-The ignore rules only control version tracking; they do not delete local data.
+Use a dedicated output directory for each run and pass data and output
+locations through command-line arguments or environment variables. Each
+workflow README documents its exact filenames and directory layout.
 
 ## Validation
 
