@@ -1,177 +1,300 @@
-# bssearch - DRAFTS FRB 搜索与注入实验工作区
+<h1 align="center">DRAFTS</h1>
 
-[English documentation](README.en.md)
+<div align="center">
 
-本目录维护当前 DRAFTS 单脉冲/FRB 搜索链路。当前主线是 **CenterNet 目标检测 + ConvNeXt binary 分类器**，覆盖训练数据生成、检测器训练、分类器训练、真实 FAST 数据搜索，以及 raw8/packed2 注入评估。
+**Deep learning-based RAdio Fast Transient Search pipeline**
 
-远端训练和大规模搜索通常在 `gpu13` 的 `pytorch` 环境中运行；本地主要做代码编辑、文档维护和轻量检查。
+面向快速射电暴与单脉冲的深度学习搜索流水线
 
-## 目录关系
+[![DRAFTS](https://img.shields.io/badge/Transient%20Search-DRAFTS-da282a)](https://github.com/SukiYume/DRAFTS)
+[![GitHub Stars](https://img.shields.io/github/stars/SukiYume/DRAFTS.svg?label=Stars&logo=github)](https://github.com/SukiYume/DRAFTS/stargazers)
+[![arXiv](https://img.shields.io/badge/arXiv-2410.03200-b31b1b.svg)](https://arxiv.org/abs/2410.03200)
+[![Python](https://img.shields.io/badge/Python-3-blue.svg)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-```text
-真实 FAST 背景 FITS
-  -> generate_burst/             生成 CenterNet 训练 H5
-  -> object_detection/           训练 CenterNet 检测器
-  -> binary_classification/      训练二分类过滤器
-  -> runcode/                    真实观测搜索入口
-  -> injection_experiment/       注入信号后评估召回、误报和量化影响
+[项目概览](#项目概览) ·
+[流水线](#drafts-流水线) ·
+[快速开始](#快速开始) ·
+[训练](#模型训练) ·
+[真实数据搜索](#真实数据搜索) ·
+[注入实验](#注入实验) ·
+[English](README.en.md)
+
+</div>
+
+---
+
+## 项目概览
+
+**DRAFTS** 是一套 Deep learning-based RAdio Fast Transient Search
+pipeline，用于在射电望远镜观测数据中搜索快速射电暴（FRB）和其他单脉冲暂现源。
+它把传统搜索链路中的消色散、候选定位和候选筛选组织成一套可训练、可部署、可评估的
+深度学习工作流。
+
+DRAFTS 的核心由三部分组成：
+
+1. **CUDA 加速消色散**：把观测数据转换为适合候选搜索的 time–DM 表示；
+2. **目标检测**：使用 CenterNet 从 time–DM 图中定位候选并估计到达时间（TOA）与
+   色散量（DM）；
+3. **二分类复核**：使用 ConvNeXt 系列分类器过滤伪候选，减少人工检查负担。
+
+当前仓库不仅保存论文版本的核心思想，还维护正在使用的训练数据生成、CenterNet
+训练、ConvNeXt 分类器训练、真实 FAST 观测搜索，以及 raw8/packed2 注入评估代码。
+
+> 论文与算法背景：
+> [DRAFTS: A Deep Learning-Based Radio Fast Transient Search Pipeline](https://arxiv.org/abs/2410.03200)
+
+### 项目特点
+
+- **端到端搜索**：覆盖训练数据构建、模型训练、真实观测搜索和注入验证；
+- **GPU 友好**：消色散、目标检测和分类均可在 CUDA 环境中运行；
+- **两阶段候选筛选**：CenterNet 负责定位，ConvNeXt 负责真实性判断；
+- **面向真实观测**：当前部署入口围绕 FAST 数据组织，同时保留扩展其他望远镜数据读取
+  的接口；
+- **独立注入评估**：支持 raw8 与 packed2 数据生成、真值匹配、召回率/误报率统计和
+  PRESTO 基线对照；
+- **大文件分离**：代码与轻量配置进入 Git，数据集、模型权重和运行结果通过外部存储或
+  本地目录管理。
+
+## DRAFTS 流水线
+
+```mermaid
+flowchart LR
+    A["真实背景 FITS"] --> B["模拟 FRB 注入<br/>generate_burst"]
+    B --> C["time–DM H5 训练集"]
+    C --> D["CenterNet 检测器训练<br/>object_detection"]
+    C --> E["ConvNeXt 分类器训练<br/>binary_classification"]
+    F["真实 FAST 观测"] --> G["CUDA 消色散"]
+    G --> D2["CenterNet 候选定位"]
+    D2 --> E2["ConvNeXt 候选复核"]
+    E2 --> H["TOA / DM 候选与诊断图"]
+    I["raw8 / packed2 注入"] --> J["DRAFTS 搜索 runtime"]
+    J --> K["truth matching<br/>召回率 / 误报率 / 定位误差"]
 ```
 
-## 子目录
+从使用角度可以把仓库分为三条主线：
 
-| 目录 | 当前内容 |
+| 主线 | 输入 | 输出 |
+|---|---|---|
+| 模型训练 | 真实背景、模拟注入、训练标注 | CenterNet 与 ConvNeXt checkpoint |
+| 真实搜索 | FAST FITS、部署权重、搜索参数 | 候选清单、TOA/DM、诊断图 |
+| 注入评估 | 背景 FITS、注入分布、搜索权重 | truth 匹配结果、召回/误报统计、PRESTO 对照 |
+
+## 仓库结构
+
+| 路径 | 在 DRAFTS 中的职责 |
 |---|---|
-| `generate_burst/` | 从真实 FAST 背景 raw data 注入 multifitting 风格模拟 FRB，消色散成 512 x 512 time-DM 图，写 CenterNet 训练 H5。当前批量入口是 `launch_shards_50000.sh`。 |
-| `object_detection/` | 当前检测器训练目录，仅保留 CenterNet 线。脚本包括 `centernet_train.py`、`centernet_data.py`、`centernet_model.py`、`centernet_eval.py`、`centernet_infer.py`。当前本地保留 `logs_v10/` 和 `Data/`。 |
-| `binary_classification/` | ConvNeXt/SPPConvNeXt 二分类过滤器训练和推理。真实搜索部署默认偏向 `convnext_small` 以保 recall。 |
-| `runcode/` | 真实数据 DRAFTS 搜索入口，可独立拷到服务器运行。包含未知 DM 盲搜、fixed-DM follow-up、PBS 提交、后端 benchmark 和运行时模型定义。 |
-| `injection_experiment/` | 注入评估主线：生成 raw8/packed2 FITS、调用 `search_runtime/` 搜索、匹配 truth、汇总指标，并运行 PRESTO 对照。该目录只追踪实验代码和必要说明。 |
+| [`generate_burst/`](generate_burst/) | 向真实 FAST 背景注入模拟 FRB，生成 512 × 512 time–DM 图和 CenterNet H5 训练集。 |
+| [`object_detection/`](object_detection/) | 训练、评估和推理当前 CenterNet 检测器。 |
+| [`binary_classification/`](binary_classification/) | 训练和评估 ConvNeXt/SPPConvNeXt 候选二分类器。 |
+| [`runcode/`](runcode/) | 可部署的真实观测搜索入口、fixed-DM follow-up、PBS 提交和后端 benchmark。 |
+| [`injection_experiment/`](injection_experiment/) | DRAFTS 注入实验代码：raw8/packed2 生成、搜索、truth matching、汇总和 PRESTO 基线。 |
+| [`requirements.txt`](requirements.txt) | 通用 Python 依赖；CUDA 相关包需按运行机器单独匹配。 |
 
-`bslocate/` 在上一级，保存旧版 YOLO 定位实验；当前 DRAFTS 主线使用 CenterNet 检测器。
+每个工作流目录都有自己的 README，记录更细的参数、输入输出契约和运行注意事项。
 
-## 训练数据生成
+## 快速开始
 
-入口：`generate_burst/launch_shards_50000.sh`
+### 1. 克隆仓库
 
-默认配置：
+```bash
+git clone https://github.com/SukiYume/DRAFTS.git
+cd DRAFTS
+```
 
-- 50,000 个唯一注入信号。
-- 每个信号 4 个 crop，总计 200,000 张 512 x 512 图。
-- 40 个 shard，默认每 wave 并发 4 个 shard，避免 FITS I/O 过载。
-- 输出 `centernet_dataset_sim50000_max3.h5`、`centernet_dataset_sim50000_max3_annotations.json`、配置 JSON、metadata JSONL 和 contact sheet。
+### 2. 创建环境
 
-运行前需要在 `generate_burst/rawdata/` 或 `RAW_DIR` 指定目录中准备背景 FITS。生成后的 H5/JSON 拷到 `object_detection/Data/` 供训练使用。
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+```
 
-详细参数、分片合并、输出文件和维护规则见 `generate_burst/README.md`。
+Windows PowerShell：
 
-## CenterNet 检测器训练
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+```
 
-入口：`object_detection/`
+PyTorch、torchvision 与 CuPy 应根据目标机器的 CUDA 驱动安装。生产搜索环境的补充依赖
+和版本提示见 [`runcode/requirements.txt`](runcode/requirements.txt)。
+
+### 3. 准备公开数据与模型
+
+- [DRAFTS training data](https://huggingface.co/datasets/TorchLight/DRAFTS)
+- [DRAFTS pretrained models](https://huggingface.co/TorchLight/DRAFTS)
+
+下载后的数据和权重应放入对应工作流 README 指定的位置。它们默认不进入 Git。
+
+## 模型训练
+
+### 训练数据生成
+
+批量入口：
+
+```bash
+cd generate_burst
+RAW_DIR=/path/to/background_fits \
+OUTPUT_ROOT=/path/to/generated_training_data \
+./launch_shards_50000.sh
+```
+
+默认批次生成 50,000 个唯一注入事件，每个事件构造 4 个 crop，并通过分片控制并发
+FITS I/O。主要产物包括训练 H5、标注 JSON、配置、metadata JSONL 和 contact sheet。
+
+完整的注入模型、采样分布、分片合并和检查命令见
+[`generate_burst/README.md`](generate_burst/README.md)。
+
+### CenterNet 检测器
 
 ```bash
 cd object_detection
-DATA_PATH=./Data/v10_sim50000_only BATCH_SIZE=24 EPOCHS=50 ./train.sh "0,1,2,3,4,5,6,7" centernet-conv-tiny
+DATA_PATH=/path/to/centernet_data \
+BATCH_SIZE=24 \
+EPOCHS=50 \
+./train.sh "0,1,2,3,4,5,6,7" centernet-conv-tiny
 ```
 
-当前保留的 v10 训练产物在 `object_detection/logs_v10/`：
+当前训练线支持 CenterNet 与 ConvNeXt backbone。部署时把选定的 EMA checkpoint 复制到
+`runcode/models/`，并使用搜索入口所要求的文件名。训练参数、数据格式和评估方式见
+[`object_detection/README.md`](object_detection/README.md)。
 
-```text
-best_model_ema.pth
-best_model.pth
-last_checkpoint.pth
-swa_model_ema.pth
-logs_centernet.json
-args.json
-```
-
-部署到真实搜索时，把选定的 `best_model_ema.pth` 复制到 `runcode/models/`，并按入口脚本需要命名，例如 `object_best_model_centernet_conv_tiny_ema.pth` 或带版本的 `object_best_model_centernet_conv_tiny_ema_v10.pth`。
-
-## Binary 分类器训练
-
-入口：`binary_classification/`
+### ConvNeXt 二分类器
 
 ```bash
 cd binary_classification
-MODEL_NAME=convnext_small EPOCHS=50 ./train.sh "0,1,2,3"
+MODEL_NAME=convnext_small \
+EPOCHS=50 \
+./train.sh "0,1,2,3"
 ```
 
-训练目录的 README 记录了 Tiny/Small 的验证指标。当前真实搜索入口使用：
-
-```text
-runcode/models/binary_best_model_conv_small_ema.pth
-```
-
-Tiny 仍保留为轻量备选：
-
-```text
-runcode/models/binary_best_model_conv_tiny_ema.pth
-```
+当前真实搜索通常使用 `convnext_small` 作为候选真实性过滤器，`convnext_tiny` 可作为
+更轻量的部署选择。数据组织、模型对比和训练摘要见
+[`binary_classification/README.md`](binary_classification/README.md)。
 
 ## 真实数据搜索
 
-入口：`runcode/`
+真实搜索代码位于 [`runcode/`](runcode/)，可按该目录边界独立部署到计算节点。
 
-| 场景 | 脚本 |
+| 任务 | 入口 |
 |---|---|
-| 未知 DM 盲搜 | `d-center-binary-gate.py` 或命令行式 `t-blind-section.py` |
+| 未知 DM 盲搜 | `d-center-binary-gate.py` 或 `t-blind-section.py` |
 | 已知 DM / 候选 DM follow-up | `d-dm-time-predown.py` |
 | PBS 批量提交 | `s-pbsspt.py` |
-| object detector 后端 benchmark | `t-object-bench.py` / `t-object-matrix.sh` |
-| fixed-DM binary 模型对比 | `t-binary-bench.sh` |
+| 检测后端 benchmark | `t-object-bench.py` / `t-object-matrix.sh` |
+| binary 模型对比 | `t-binary-bench.sh` |
 
-详细参数、输出文件名和排错表见 `runcode/README.md`。`runcode/models/` 是生产入口直接读取的权重目录；训练目录里的 checkpoint 不会自动生效。
+通用盲搜示例：
+
+```bash
+python runcode/t-blind-section.py \
+  --root /path/to/fast_observation \
+  --output-root /path/to/drafts_search_output \
+  --gpu-num 1 \
+  --gpu-ids 0
+```
+
+搜索前需要把检测器和分类器权重放入 `runcode/models/`。完整命令、manifest 构建、
+输出目录规则、fixed-DM 用法和排错表见 [`runcode/README.md`](runcode/README.md)。
 
 ## 注入实验
 
-入口：`injection_experiment/`
+[`injection_experiment/`](injection_experiment/) 是独立的 DRAFTS 注入评估代码区，只
+追踪注入、搜索、分析、聚合和 PRESTO 对照所需代码与必要说明，不包含论文素材、
+文献笔记或运行输出。
 
-主要脚本：
+主要入口：
 
-| 脚本 | 作用 |
+| 文件 | 作用 |
 |---|---|
-| `inject_fits.py` | 把模拟 FRB 注入真实 FAST 背景，输出 raw8；可同时生成 packed2。 |
-| `run_injection_campaign.py` | 批量生成、搜索、分析和聚合的总调度。支持 generate-only、search-only 和 raw8/packed2 并行搜索。 |
-| `run_v10_search_1024ds2.sh` | 当前 v10/1024-ds2 远端搜索入口。 |
-| `analyze_search_results.py` | 把 truth 与 candidate manifest 匹配，输出召回、误报和参数分箱结果。 |
-| `aggregate_campaign_results.py` | 汇总多个 batch 的 analysis 结果。 |
-| `search_runtime/` | 注入实验专用搜索 runtime，包含精简版 gate/core、模型定义和权重占位说明。 |
-| `presto_runtime/` | PRESTO blind-search 基线和阈值分析代码。 |
+| `inject_fits.py` | 向真实背景注入模拟 FRB，生成 raw8，并可同步生成 packed2。 |
+| `run_injection_campaign.py` | 调度生成、搜索、分析和聚合，支持 generate-only 与 search-only。 |
+| `launch_search.py` | 启动注入实验专用 DRAFTS 搜索 runtime。 |
+| `analyze_search_results.py` | 匹配 truth 与候选，计算召回、误报和参数分箱结果。 |
+| `aggregate_campaign_results.py` | 汇总多个 batch 的分析结果。 |
+| `search_runtime/` | 注入实验使用的精简搜索代码与权重占位说明。 |
+| `presto_runtime/` | PRESTO blind-search 基线与阈值扫描代码。 |
 
-详细运行模式、权重放置、search-only 复跑和分析命令见 `injection_experiment/README.md`。
-
-复用旧 campaign 的搜索结果时参考：
+通用 search-only 示例：
 
 ```bash
-python run_injection_campaign.py \
-  --work-root /path/to/drafts_runs/injection_experiment/runs \
-  --run-label v9_injection_10000_eventdedup_20260628_0200 \
+python injection_experiment/run_injection_campaign.py \
+  --work-root /path/to/injection_runs \
+  --run-label example_campaign \
   --batches 20 \
   --count-per-batch 500 \
   --search-only \
-  --overwrite-search \
-  --runtime-dir /path/to/drafts_runs/injection_experiment/search_runtime \
+  --runtime-dir injection_experiment/search_runtime \
   --gpu-num 8 \
   --gpu-ids 0,1,2,3,4,5,6,7 \
   --detector-type centernet_conv_tiny \
-  --detector-ckpt models/object_best_model_centernet_conv_tiny_ema_v10.pth \
+  --detector-ckpt models/object_best_model_centernet_conv_tiny_ema.pth \
   --classifier-ckpt models/binary_best_model_conv_small_ema.pth \
-  --classifier-model-name convnext_small \
-  --class-block-size 1024 \
-  --class-time-downsample 2 \
-  --source-dm-tolerance 60 \
-  --source-time-tolerance-ms 30
+  --classifier-model-name convnext_small
 ```
 
-## 快速选择
+权重放置、raw8/packed2 并行搜索、truth matching 容差和 PRESTO 对照见
+[`injection_experiment/README.md`](injection_experiment/README.md)。
 
-| 要做什么 | 进入 |
-|---|---|
-| 生成新的检测器训练 H5 | `generate_burst/` |
-| 训练或复查当前 CenterNet 检测器 | `object_detection/` |
-| 训练 binary 过滤器 | `binary_classification/` |
-| 在真实 FAST 数据上搜索 | `runcode/` |
-| 跑 raw8/packed2 注入评估 | `injection_experiment/` |
+## 数据、模型与输出边界
 
-## 输出和权重约定
+Git 追踪：
 
-- `object_detection/Data/` 和 `binary_classification/Data/` 是训练数据位置。
-- `object_detection/logs_v10/`、`binary_classification/logs/` 是训练产物位置。
-- `runcode/models/` 是真实搜索部署权重位置。
-- `injection_experiment/search_runtime/models/` 不随仓库带权重，运行前按 `PUT_WEIGHTS_HERE.txt` 放入对应 `.pth`。
-- 注入结果、搜索结果和对比图保存在本地或远端运行目录，不进入仓库。
+- Python 与 Shell 源码；
+- README、轻量配置和必要的小型训练摘要；
+- 可复现工作流所需的目录结构和权重占位说明。
 
-## Git 追踪边界
+Git 不追踪：
 
-仓库追踪代码、脚本、README、轻量配置和小型训练摘要。以下内容保留在本地或服务器，不进入 Git：
-
-- FITS 原始观测、H5/NumPy 训练数据；
+- 原始 FITS、生成的 H5/NumPy 数据和大体积中间文件；
 - `.pth`、`.pt`、`.ckpt` 等模型权重；
-- 训练日志、批处理状态、搜索输出和可重新生成的结果表；
-- 退役实现、本地 resolution 评估、论文材料和文献笔记。
+- 训练日志、搜索输出、注入结果和可重新生成的统计表；
+- 本地 benchmark、退役实现、论文材料和文献笔记。
 
-公开训练数据和模型分别存放在
-[Hugging Face 数据集](https://huggingface.co/datasets/TorchLight/DRAFTS) 与
-[Hugging Face 模型库](https://huggingface.co/TorchLight/DRAFTS)。各工作流 README
-说明了本地数据和权重应放置的位置；`.gitignore` 只阻止 Git 追踪，不会删除这些本地文件。
+`.gitignore` 只控制版本追踪，不会删除本地或服务器上的数据。建议每次运行使用独立的
+外部输出目录，并把数据位置通过命令行参数或环境变量传入。
 
-项目采用 MIT 许可证，见 [LICENSE](LICENSE)。
+## 快速验证
+
+从仓库根目录运行：
+
+```bash
+python -m compileall -q \
+  generate_burst \
+  object_detection \
+  binary_classification \
+  runcode \
+  injection_experiment
+```
+
+Shell 脚本可在 Linux 环境中使用 `bash -n path/to/script.sh` 做静态语法检查。
+
+## DRAFTS 与 AFTER
+
+DRAFTS 负责在观测数据中**寻找和筛选暂现源候选**。当候选 TOA/DM 已经确认后，可以把
+后续 FAST burst 裁切、定标、标注复核、能量与偏振分析交给
+[AFTER](https://github.com/SukiYume/AFTER)。
+
+```text
+DRAFTS: search and candidate selection
+    -> confirmed TOA / DM
+AFTER: reduction, calibration and physical measurements
+```
+
+## 引用与许可
+
+如果本仓库对你的研究有帮助，请引用
+[DRAFTS 论文](https://arxiv.org/abs/2410.03200)，并在方法部分注明使用的模型版本、
+checkpoint、搜索参数和数据格式。
+
+本项目采用 [MIT License](LICENSE)。
+
+---
+
+<div align="center">
+  <sub>DRAFTS · Searching for fast radio transients with deep learning</sub>
+</div>
