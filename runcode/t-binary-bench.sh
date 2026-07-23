@@ -389,13 +389,13 @@ declare -a TASK_NAMES=()
 TINY_CKPT="$ROOT_DIR/models/binary_best_model_conv_tiny_ema.pth"
 SMALL_CKPT="$ROOT_DIR/models/binary_best_model_conv_small_ema.pth"
 
-run_task 0 binary_conv_tiny  convnext_tiny  "$TINY_CKPT"  FRB180301A_20260430_M01      /data32/ZD2025_5/FRB180301A/20260430/      510 8 M01
-run_task 1 binary_conv_tiny  convnext_tiny  "$TINY_CKPT"  FRB20220912A_20230926_M01    /data31/ZD2023_5/FRB20220912A/20230926    220 8 M01
-run_task 2 binary_conv_tiny  convnext_tiny  "$TINY_CKPT"  CHIMEJ0630+25_20260214_M01   /data32/ZD2025_5/CHIMEJ0630+25/20260214/  22  2,4,8,16,32,64,128,256,512,1024 M01
+run_task 0 binary_conv_tiny  convnext_tiny  "$TINY_CKPT"  observation_a /path/to/observations/source_a/date 510 8 M01
+run_task 1 binary_conv_tiny  convnext_tiny  "$TINY_CKPT"  observation_b /path/to/observations/source_b/date 220 8 M01
+run_task 2 binary_conv_tiny  convnext_tiny  "$TINY_CKPT"  observation_c /path/to/observations/source_c/date 22  2,4,8,16,32,64,128,256,512,1024 M01
 
-run_task 3 binary_conv_small convnext_small "$SMALL_CKPT" FRB180301A_20260430_M01      /data32/ZD2025_5/FRB180301A/20260430/      510 8 M01
-run_task 4 binary_conv_small convnext_small "$SMALL_CKPT" FRB20220912A_20230926_M01    /data31/ZD2023_5/FRB20220912A/20230926    220 8 M01
-run_task 5 binary_conv_small convnext_small "$SMALL_CKPT" CHIMEJ0630+25_20260214_M01   /data32/ZD2025_5/CHIMEJ0630+25/20260214/  22  2,4,8,16,32,64,128,256,512,1024 M01
+run_task 3 binary_conv_small convnext_small "$SMALL_CKPT" observation_a /path/to/observations/source_a/date 510 8 M01
+run_task 4 binary_conv_small convnext_small "$SMALL_CKPT" observation_b /path/to/observations/source_b/date 220 8 M01
+run_task 5 binary_conv_small convnext_small "$SMALL_CKPT" observation_c /path/to/observations/source_c/date 22  2,4,8,16,32,64,128,256,512,1024 M01
 
 printf '%s\n' "${PIDS[@]}" > "$LOG_DIR/pids.txt"
 printf '%s\n' "${TASK_NAMES[@]}" > "$LOG_DIR/tasks.txt"

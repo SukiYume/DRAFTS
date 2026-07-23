@@ -424,15 +424,15 @@ if __name__ == '__main__':
 
     # ---- 路径配置 ----
     # data_path 既可以是 source/date/ 直接含 fits 的目录，也可以是 source/ 含多 date 子目录的目录
-    data_path   = '/data31/PT2024_0263/GPM_J1839-10/'       # 单目标模板替换用；非 None 时覆盖 data_paths
+    data_path   = '/path/to/observations/source/date/'       # 单目标模板替换用；非 None 时覆盖 data_paths
     data_paths  = [data_path]
     save_base   = '/path/to/observations/'
     beam_filter = 'M01'                                  # 'M01' / 'M02' / ... / 'all' / None
 
     # 备用配置示例
-    # data_path   = '/data31/ZD2024_5/FRB20240114A/20250530/'
-    # data_path   = '/data32/ZD2025_5/CHIMEJ0630+25/20251101/'
-    # 多目标：data_path = None; data_paths = ['/root1/', '/root2/', ...]
+    # data_path   = '/path/to/observations/another_source/date/'
+    # data_path   = '/path/to/observations/source/'
+    # 多目标：data_path = None; data_paths = ['/path/to/root_a/', '/path/to/root_b/', ...]
     if data_path is not None:
         data_paths = [data_path]
 

@@ -6,10 +6,10 @@
 #   ./extract_xz.sh <source>  <destination>  [name_filter]
 #
 # Examples:
-#   ./extract_xz.sh  ./files.txt          /home/user/out          # 文件列表 → 出
-#   ./extract_xz.sh  /data/raw_xz/        /home/user/out          # 目录（默认按 'M01' 过滤）
-#   ./extract_xz.sh  /data/raw_xz/        /home/user/out  'all'   # 目录，不过滤
-#   ./extract_xz.sh  /data/raw_xz/        /home/user/out  'M02'   # 目录，按 'M02' 过滤
+#   ./extract_xz.sh  ./files.txt          /path/to/output          # 文件列表 → 输出
+#   ./extract_xz.sh  /path/to/raw_xz/     /path/to/output          # 目录（默认按 'M01' 过滤）
+#   ./extract_xz.sh  /path/to/raw_xz/     /path/to/output  'all'   # 目录，不过滤
+#   ./extract_xz.sh  /path/to/raw_xz/     /path/to/output  'M02'   # 目录，按 'M02' 过滤
 #
 # 行为说明:
 #   - 已存在且无 .temp 标记的目标文件会被跳过

@@ -6,7 +6,7 @@ organization, GPU-section slicing, model loading, and processing.
 Example, production-like CRAFTS parameters on one local section:
     CUDA_VISIBLE_DEVICES=0 python t-blind-section.py \
         --section 0 --gpu-num 1 \
-        --data-path /data31/ZD2024_5/FRB20240114A/20250530 \
+        --data-path /path/to/observations/source/date \
         --output-root /path/to/drafts_runs/blind \
         --beam M01 \
         --dm-range 4096 --dm-scale 1 --dm-offset 0 \

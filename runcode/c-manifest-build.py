@@ -15,12 +15,7 @@ from typing import List, Optional, Tuple
 
 
 DEFAULT_DATA_PATHS = [
-    '/data31/ZD2020_1_1_2bit/',
-    '/data31/ZD2021_1_1_2bit/',
-    '/data31/ZD2022_1_1_2bit/',
-    '/data31/ZD2023_1_1_2bit/',
-    '/data31/ZD2024_1_1_2bit/',
-    '/data32/ZD2025_1_1_2bit/',
+    '/path/to/CRAFTS/',
 ]
 DEFAULT_OUTPUT = '/path/to/observations/CRAFTS/task_manifest_zd202x_1_1_2bit.json'
 

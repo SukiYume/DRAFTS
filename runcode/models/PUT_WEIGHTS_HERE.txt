@@ -1,4 +1,4 @@
-DRAFTS injection search requires these two files in this directory:
+DRAFTS search runtime requires these two files in this directory:
 
 1. object_best_model_centernet_conv_tiny_ema_v10.pth
    https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth

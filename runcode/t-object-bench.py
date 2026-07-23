@@ -9,7 +9,7 @@ Example, production-like CRAFTS detector settings:
         --backend cupy \
         --detector-type centernet_conv_tiny \
         --detector-ckpt models/object_best_model_centernet_conv_tiny_ema_v10.pth \
-        --data-path /data31/ZD2023_5/FRB20220912A/20230926 \
+        --data-path /path/to/observations/source/date \
         --output-root /path/to/drafts_runs/object_backend \
         --dm-range 4096 --dm-scale 1 --dm-offset 0 \
         --dm-threshold 10 --block-size 4096 --detect-dm-span 1024 --det-prob 0.40

@@ -128,7 +128,27 @@ PyTorch、torchvision 与 CuPy 应根据目标机器的 CUDA 驱动安装。生�
 - [DRAFTS training data](https://huggingface.co/datasets/TorchLight/DRAFTS)
 - [DRAFTS pretrained models](https://huggingface.co/TorchLight/DRAFTS)
 
-下载后的数据和权重应放入对应工作流 README 指定的位置。
+当前搜索链路使用：
+
+| 任务 | 文件 | SHA-256 |
+|---|---|---|
+| CenterNet ConvNeXt-Tiny detector v10 | `object_best_model_centernet_conv_tiny_ema_v10.pth` | `bcad4e710f5f1ccd3c8609d35a8d3fbfc36abd1d85bfefd035e945a573fb0629` |
+| ConvNeXt-Small binary classifier | `binary_best_model_conv_small_ema.pth` | `2055745aab76ddc16074516aa7b9aafdfaedf16df37ce8924389573eab27ffd8` |
+
+部署真实搜索时可直接下载到 `runcode/models/`：
+
+```bash
+mkdir -p runcode/models
+curl -L \
+  -o runcode/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
+curl -L \
+  -o runcode/models/binary_best_model_conv_small_ema.pth \
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
+```
+
+注入实验使用相同的两个文件，放置位置见
+[`injection_experiment/README.md`](injection_experiment/README.md)。
 
 ## 模型训练
 
@@ -173,7 +193,7 @@ EPOCHS=50 \
 ```
 
 当前真实搜索通常使用 `convnext_small` 作为候选真实性过滤器，`convnext_tiny` 可作为
-更轻量的部署选择。数据组织、模型对比和训练摘要见
+更轻量的部署选择。数据组织、模型选择和训练参数见
 [`binary_classification/README.md`](binary_classification/README.md)。
 
 ## 真实数据搜索
@@ -192,10 +212,11 @@ EPOCHS=50 \
 
 ```bash
 python runcode/t-blind-section.py \
-  --root /path/to/fast_observation \
+  --section 0 \
+  --data-path /path/to/fast_observation \
   --output-root /path/to/drafts_search_output \
   --gpu-num 1 \
-  --gpu-ids 0
+  --beam M01
 ```
 
 搜索前需要把检测器和分类器权重放入 `runcode/models/`。完整命令、manifest 构建、
@@ -231,7 +252,7 @@ python injection_experiment/run_injection_campaign.py \
   --gpu-num 8 \
   --gpu-ids 0,1,2,3,4,5,6,7 \
   --detector-type centernet_conv_tiny \
-  --detector-ckpt models/object_best_model_centernet_conv_tiny_ema.pth \
+  --detector-ckpt models/object_best_model_centernet_conv_tiny_ema_v10.pth \
   --classifier-ckpt models/binary_best_model_conv_small_ema.pth \
   --classifier-model-name convnext_small
 ```

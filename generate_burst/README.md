@@ -147,8 +147,7 @@ python inspect_time_dm_h5.py \
 
 配套 JSON/JSONL 保存完整参数和逐图 metadata，复查训练数据时优先看这些文件。
 
-## 维护规则
+## 运行注意事项
 
-- `rawdata/`、`shards_50000/`、最终 H5、contact sheet 和日志都是运行产物；源码维护时不要把它们当作手写配置。
 - 重新跑同一输出目录前先确认旧 shard 是否要保留，避免新旧 shard 混合。
 - 如果只改训练策略，优先在 `../object_detection/` 改；本目录只负责生成检测器训练数据。

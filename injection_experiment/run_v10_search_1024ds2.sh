@@ -4,13 +4,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
-if [[ -f /path/to/miniforge3/etc/profile.d/conda.sh ]]; then
-  # Remote pg13/pg15 environment used for the injection search.
-  source /path/to/miniforge3/etc/profile.d/conda.sh
-  conda activate pytorch
-elif [[ -f "${HOME}/miniconda3/etc/profile.d/conda.sh" ]]; then
-  source "${HOME}/miniconda3/etc/profile.d/conda.sh"
-  conda activate pytorch
+CONDA_SH="${CONDA_SH:-}"
+CONDA_ENV="${CONDA_ENV:-}"
+if [[ -n "${CONDA_SH}" ]]; then
+  if [[ ! -f "${CONDA_SH}" ]]; then
+    echo "[error] CONDA_SH does not exist: ${CONDA_SH}" >&2
+    exit 2
+  fi
+  # shellcheck disable=SC1090
+  source "${CONDA_SH}"
+  if [[ -n "${CONDA_ENV}" ]]; then
+    conda activate "${CONDA_ENV}"
+  fi
 fi
 
 PY="${PY:-python}"

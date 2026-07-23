@@ -34,19 +34,19 @@
 | `extract_xz.sh` | 批量解压 `.xz` FITS。 |
 | `binary_model.py` | binary 分类器模型定义。 |
 | `centernet_model.py` / `centernet_eval.py` | CenterNet 构建和 heatmap 解码。 |
-| `models/` | 本目录默认读取的部署权重。 |
-| `requirements.txt` | 需要用 `bash` 执行的环境安装命令脚本。 |
+| `models/` | 本目录默认读取的部署权重及下载说明。 |
+| `requirements.txt` | 搜索 runtime 的 Python 依赖清单。 |
 
 ## 环境
 
-`requirements.txt` 是 shell 脚本，不能用 `pip install -r`：
-
 ```bash
-conda activate pytorch
-bash requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-它会安装 `numpy`、`astropy`、`matplotlib`、`seaborn`、`tqdm`、`cupy`、`opencv-python`，并通过 PyTorch wheel URL 安装 `torch` / `torchvision`。如果机器 CUDA 版本不同，先按目标机器修改 PyTorch 的 `--index-url`。
+CuPy 不在通用依赖清单中：请单独安装与目标节点 CUDA toolkit 匹配的构建，例如
+`cupy-cuda12x`。`t-object-bench.py --backend numba` 是可选 benchmark，只有使用该后端时
+才需要额外安装 `numba`。PyTorch 与 torchvision 同样应选择和目标 CUDA 环境匹配的
+wheel。
 
 检查环境：
 
@@ -60,16 +60,25 @@ PY
 
 ## 模型权重
 
-当前本地 `models/` 里保留：
+当前默认运行只需要两份权重：
 
-```text
-object_best_model_centernet_conv_tiny_ema_v10.pth
-object_best_model_centernet_conv_tiny_ema.pth
-binary_best_model_conv_small_ema.pth
-binary_best_model_conv_tiny_ema.pth
+| 模型 | 文件名 | SHA-256 |
+|---|---|---|
+| CenterNet + ConvNeXt-Tiny detector v10 | `object_best_model_centernet_conv_tiny_ema_v10.pth` | `bcad4e710f5f1ccd3c8609d35a8d3fbfc36abd1d85bfefd035e945a573fb0629` |
+| ConvNeXt-Small binary classifier | `binary_best_model_conv_small_ema.pth` | `2055745aab76ddc16074516aa7b9aafdfaedf16df37ce8924389573eab27ffd8` |
+
+从 [DRAFTS model repository](https://huggingface.co/TorchLight/DRAFTS) 下载到
+`models/`：
+
+```bash
+mkdir -p models
+curl -L \
+  -o models/object_best_model_centernet_conv_tiny_ema_v10.pth \
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
+curl -L \
+  -o models/binary_best_model_conv_small_ema.pth \
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
 ```
-
-其中无版本号的 detector 权重是历史文件保留项；当前入口默认只使用 v10 文件。
 
 当前默认：
 
@@ -80,7 +89,7 @@ CLASSIFIER_MODEL_NAME = "convnext_small"
 CLASSIFIER_CKPT = "./models/binary_best_model_conv_small_ema.pth"
 ```
 
-训练目录里的 checkpoint 不会自动生效。更换 detector 时，从 `../object_detection/logs_v10/best_model_ema.pth` 或其他训练日志目录复制到 `models/`，并同步修改入口脚本或命令行参数。更换 binary 分类器时，保持 `CLASSIFIER_MODEL_NAME` 与权重训练 backbone 一致。
+更换权重时需要同时保持 detector type、classifier backbone 和 checkpoint 架构一致。
 
 支持的 detector：
 
@@ -118,7 +127,7 @@ source/date2/*.fits
 CUDA_VISIBLE_DEVICES=0 python t-blind-section.py \
   --section 0 \
   --gpu-num 1 \
-  --data-path /data31/ZD2024_5/FRB20240114A/20250530 \
+  --data-path /path/to/fast_observation/source/date \
   --output-root /path/to/drafts_runs/blind \
   --beam M01 \
   --detector-type centernet_conv_tiny \
@@ -156,7 +165,7 @@ ROOT=/path/to/drafts_runs/data_searching \
 OUTPUT_ROOT=/path/to/drafts_runs/blind \
 BEAM=all GPU_NUM=8 \
 DM_THRESHOLD=10 BLOCK_SIZE=4096 DM_SPAN=1024 DET_PROB=0.40 \
-  bash t-blind-batch.sh /data31/ZD2024_1_1_2bit/
+  bash t-blind-batch.sh /path/to/fast_observation/
 ```
 
 `mu01` 这类 gate 节点不要直接跑 `t-blind-batch.sh`，用 `s-pbsspt.py` 提交 PBS。
@@ -180,14 +189,9 @@ process_config = ProcessConfig(
 
 data_path = None
 data_paths = [
-    "/data31/ZD2020_1_1_2bit/",
-    "/data31/ZD2021_1_1_2bit/",
-    "/data31/ZD2022_1_1_2bit/",
-    "/data31/ZD2023_1_1_2bit/",
-    "/data31/ZD2024_1_1_2bit/",
-    "/data32/ZD2025_1_1_2bit/",
+    "/path/to/fast_observations/CRAFTS/",
 ]
-save_base = "/path/to/observations/CRAFTS/"
+save_base = "/path/to/drafts_search_output/CRAFTS/"
 beam_filter = "all"
 ```
 
@@ -279,8 +283,8 @@ config = ProcessConfig(
 )
 
 classifier_ckpt = "./models/binary_best_model_conv_small_ema.pth"
-data_path = "/data31/PT2024_0263/GPM_J1839-10/"
-save_base = "/path/to/observations/"
+data_path = "/path/to/fast_observation/source/date/"
+save_base = "/path/to/drafts_search_output/"
 beam_filter = "M01"
 ```
 
@@ -329,7 +333,7 @@ python c-data-check.py 0
 ```python
 root_path = "/path/to/runtime/"
 script_name = "d-center-binary-gate.py"
-node_config = {13: 8}       # {节点号: GPU数}
+node_config = {1: 8}        # {节点号: GPU数}
 job_name = "zd2bit"
 workers_per_gpu = 4         # 每块 GPU 上并发跑几个 section（1~4）
 ```
@@ -357,7 +361,7 @@ CUDA_VISIBLE_DEVICES=0 python t-object-bench.py \
   --backend cupy \
   --detector-type centernet_conv_tiny \
   --detector-ckpt models/object_best_model_centernet_conv_tiny_ema_v10.pth \
-  --data-path /data31/ZD2023_5/FRB20220912A/20230926 \
+  --data-path /path/to/fast_observation/source/date \
   --output-root /path/to/drafts_runs/object_backend \
   --dm-range 4096 \
   --dm-scale 1 \
@@ -372,7 +376,7 @@ CUDA_VISIBLE_DEVICES=0 python t-object-bench.py \
 
 ```bash
 ROOT=/path/to/drafts_runs/data_searching \
-DATA_PATH=/data31/ZD2023_5/FRB20220912A/20230926 \
+DATA_PATH=/path/to/fast_observation/source/date \
 OUT_ROOT=/path/to/drafts_runs/object_backend \
 GPU_NUM=4 BACKENDS="cupy" MODELS="centernet_conv_tiny" SAVE_PLOT=0 \
   bash t-object-matrix.sh
@@ -399,5 +403,5 @@ bash t-binary-bench.sh --summarize-only
 | 所有任务都跳过 | 删除对应 `processing_log*.txt`。 |
 | CUDA OOM | 减小 `dm_range` 或 `block_size`，或降低同一 GPU 上并发进程数。 |
 | 输出目录混有旧结果 | 换新的输出目录，或清理目标目录后重跑。 |
-| `pip install -r requirements.txt` 报错 | 这是 shell 安装脚本，请用 `bash requirements.txt`。 |
-| 新服务器 `models/` 为空 | 从训练机器复制权重，再确认脚本指向的文件名。 |
+| `import cupy` 失败 | 安装与节点 CUDA toolkit 匹配的 CuPy 构建。 |
+| 新服务器 `models/` 为空 | 按“模型权重”一节下载两份默认权重并校验文件名。 |

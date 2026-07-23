@@ -34,6 +34,14 @@ Desktop.ini
 *.npy
 *.npz
 /object_detection/Data/*_annotations.json
+/binary_classification/Data/
+/generate_burst/rawdata/
+/generate_burst/shards_*/
+/generate_burst/*.config.json
+/generate_burst/*.metadata.jsonl
+/generate_burst/*.inspect.json
+/generate_burst/*_visual_inspect.json
+/generate_burst/*_contact.png
 
 # Model checkpoints and exported runtimes
 *.pth
@@ -50,9 +58,18 @@ Desktop.ini
 wandb/
 checkpoints/
 shards_*/
+/binary_classification/logs/
+/object_detection/logs*/
+/binary_classification/binary_predictions.csv
+/runcode/c-candidates.csv
+/runcode/c-candidates.json
+/runcode/DataCheck_Plots/
+/runcode/processing_log*.txt
+/runcode/pbsspt/
 
 # Local-only or retired code/results
 /runcode/legacy/
+/runcode/d-dm-time-predown-121102.py
 /binary_classification/resolution_eval_*/
 /output/
 
@@ -62,6 +79,8 @@ shards_*/
 /injection_experiment/notes/
 /injection_experiment/results/
 /injection_experiment/runs/
+/injection_experiment/simdata/
+/injection_experiment/truth_archive/
 
 # LaTeX build products
 *.aux

@@ -76,12 +76,25 @@ inject_fits.py
 
 当前保留的 v10/1024-ds2 结果使用 `object_best_model_centernet_conv_tiny_ema_v10.pth` 和 `binary_best_model_conv_small_ema.pth`。
 
+两份默认权重可从
+[DRAFTS model repository](https://huggingface.co/TorchLight/DRAFTS) 下载：
+
+```bash
+mkdir -p search_runtime/models
+curl -L \
+  -o search_runtime/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
+curl -L \
+  -o search_runtime/models/binary_best_model_conv_small_ema.pth \
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
+```
+
 ## 只生成注入数据
 
 复用同一批注入数据比较不同模型时，先生成一次注入数据：
 
 ```bash
-cd bssearch/injection_experiment
+cd DRAFTS/injection_experiment
 python run_injection_campaign.py \
   --background-dir /path/to/rawdata \
   --work-root /path/to/injection_experiment/runs \
@@ -157,10 +170,8 @@ python aggregate_campaign_results.py \
   --output-dir /path/to/runs/<run_label>/aggregate
 ```
 
-## 维护规则
+## 运行注意事项
 
 - 注入 FITS 体积很大。只有需要复用同一批注入数据做模型对比时才使用 `--keep-injected-fits`。
 - `--search-only` 依赖 `simdata/` 和 `truth_archive/` 中已有的注入数据；换 `--run-label` 前先确认对应 campaign 已生成。
 - `--overwrite-search` 只用于替换搜索、分析和汇总产物；它不负责重新生成注入 truth。
-- 仓库只追踪注入、搜索、分析、聚合和 PRESTO 对照代码，以及必要的 README 和权重占位说明。
-- `results/`、论文材料和实验笔记保留在本地或专门的研究目录，不进入本仓库。

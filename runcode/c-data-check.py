@@ -67,7 +67,7 @@ if __name__ == "__main__":
     # 全局常量（保持原状或仅微调）
     beam       = int(sys.argv[1]) + 1 if len(sys.argv) > 1 else 0
     group_size = 5
-    data_path  = '/data31/ZD2024_5/M60/20250707/'
+    data_path  = '/path/to/observations/source/date/'
     save_path  = './DataCheck_Plots/'
     os.makedirs(save_path, exist_ok=True)
 

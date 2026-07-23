@@ -1,22 +1,15 @@
-# Installation commands for d-*.py entry scripts and their local imports.
-#
-# Covered entry points:
-# - d-center-binary-gate.py
-# - d-center-binary-core.py
-# - d-dm-time-predown.py
-#
-# Covered local imports:
-# - binary_model.py
-# - centernet_model.py
-# - centernet_eval.py
-#
-# Not included:
-# - t-* benchmark-only dependencies.
-#
-# Usage:
-#   conda activate <your-env>
-#   bash requirements.txt
+# Core Python dependencies for the deployable DRAFTS search runtime.
+numpy
+astropy
+matplotlib
+seaborn
+tqdm
+opencv-python
+torch
+torchvision
 
-conda install -y -c conda-forge numpy astropy matplotlib seaborn tqdm cupy
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
-pip install opencv-python
+# Install a CuPy build that matches the node's CUDA toolkit separately, for
+# example: python -m pip install cupy-cuda12x
+#
+# The optional Numba detector benchmark also requires:
+# python -m pip install numba

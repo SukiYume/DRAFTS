@@ -5,14 +5,15 @@
 #   ROOT=/path/to/drafts_runs/data_searching \
 #   OUTPUT_ROOT=/path/to/drafts_runs/blind \
 #   BEAM=all GPU_NUM=8 DM_THRESHOLD=10 BLOCK_SIZE=4096 DM_SPAN=1024 DET_PROB=0.40 \
-#     bash t-blind-batch.sh /data31/ZD2024_1_1_2bit/
+#     bash t-blind-batch.sh /path/to/observations/source/date
 #
-# This direct launcher is for development nodes. On mu01/gate nodes use
-# s-pbsspt.py instead of running this script directly.
+# This direct launcher is for interactive compute nodes. On PBS-managed nodes,
+# use s-pbsspt.py instead.
 set -euo pipefail
 
-ROOT="/path/to/drafts_runs/data_searching"
-PY_ENV="${PY_ENV:-pytorch}"
+ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+CONDA_SH="${CONDA_SH:-}"
+CONDA_ENV="${CONDA_ENV:-}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-$ROOT/outputs}"
 RUN_LABEL="${RUN_LABEL:-blind_centernet_conv_tiny_binary_conv_small_v10}"
 LOG_ROOT="$ROOT/logs/${RUN_LABEL}_$(date +%Y%m%d_%H%M%S)"
@@ -30,22 +31,26 @@ DM_SPAN="${DM_SPAN:-2048}"
 DET_PROB="${DET_PROB:-0.45}"
 TIME_FACTOR="${TIME_FACTOR:-8}"
 
-if (($# > 0)); then
-  DATASETS=("$@")
-else
-  DATASETS=(
-    "/data31/ZD2023_5/FRB20220912A/20230926"
-    "/data31/ZD2024_5/FRB20190417A/20250723"
-  )
+if (($# == 0)); then
+  echo "Usage: $0 /path/to/observations/source/date [...]" >&2
+  exit 2
 fi
+DATASETS=("$@")
 
 mkdir -p "$OUTPUT_ROOT" "$LOG_ROOT"
 cd "$ROOT"
 
-set +u
-source ~/.bashrc
-conda activate "$PY_ENV"
-set -u
+if [[ -n "$CONDA_SH" ]]; then
+  if [[ ! -f "$CONDA_SH" ]]; then
+    echo "[Error] CONDA_SH does not exist: $CONDA_SH" >&2
+    exit 2
+  fi
+  # shellcheck disable=SC1090
+  source "$CONDA_SH"
+  if [[ -n "$CONDA_ENV" ]]; then
+    conda activate "$CONDA_ENV"
+  fi
+fi
 
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1

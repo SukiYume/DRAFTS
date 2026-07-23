@@ -329,14 +329,11 @@ def print_help():
 if __name__ == '__main__':
 
     # ---- 配置 ----
-    root_path       = '/path/to/drafts_runs/data_searching/'         # 末尾要带 '/'
+    root_path       = '/path/to/drafts_runs/runcode/'                # 末尾要带 '/'
     workers_per_gpu = 4                                                   # 每块 GPU 并发跑几个 section（1~4）
-    # script_name     = 'd-center-binary-gate.py'                           # 或 'd-dm-time-predown.py'
-    # node_config     = {13: 8, 14: 8}                                      # {节点号: GPU数}
-    # job_name        = 'zd2bit'                                            # PBS Job 名前缀
-    script_name     = 'd-dm-time-predown-121102.py'
-    node_config     = {15: 7, 16: 8}
-    job_name        = 'frb12'
+    script_name     = 'd-center-binary-gate.py'                           # 或 'd-dm-time-predown.py'
+    node_config     = {1: 8}                                              # {节点号: GPU数}
+    job_name        = 'drafts'
     # sum(node_config.values()) * workers_per_gpu 必须等于 process_config.section_num
     # 当前配置：8 块 GPU x 4 workers = 32，对应 d-center-binary-gate.py 里 section_num=32
 
@@ -355,7 +352,7 @@ if __name__ == '__main__':
     #         'section_num': sum(node_config.values()) * workers_per_gpu,
     #         'time_factor': 8,
     #     },
-    #     data_path='/data31/ZD2023_5/FRB20220912A/20230926/',
+    #     data_path='/path/to/observations/source/date/',
     #     save_base='/path/to/observations/',
     #     beam_filter='M01',
     #     log_file='./processing_log_220912.txt',

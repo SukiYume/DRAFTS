@@ -17,7 +17,7 @@ PY="${PY:-python}"                                   # 用当前环境的 python
 # 50000 唯一信号 x 4 crops = 200000 张图
 TOTAL_UNIQUE=50000
 SHARD_COUNT=40
-# th02 /data28 full-generation benchmark: 4 concurrent shards avoids FITS I/O thrash.
+# A full-generation benchmark found that four concurrent shards avoids FITS I/O thrash.
 SHARDS_PER_WAVE="${SHARDS_PER_WAVE:-4}"
 UNIQUE_PER_SHARD=$((TOTAL_UNIQUE / SHARD_COUNT))
 CROPS_PER_SIGNAL=4

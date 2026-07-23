@@ -251,7 +251,7 @@ if __name__ == '__main__':
         block_size   = 4096,        # 每个时间切片的样本数（降采样后）
         dm_span      = 1024,        # 每张 512x512 检测图覆盖的原始 DM 点数
         det_prob     = 0.40,        # 中心检测置信度阈值
-        section_num  = 64,          # 与 PBS submission 展开后的总 section 数一致（= GPU 数 x workers_per_gpu）
+        section_num  = 32,          # 与 PBS submission 展开后的总 section 数一致（= GPU 数 x workers_per_gpu）
         time_factor  = 8,           # 控制 down_time_rate
     )
 
@@ -278,25 +278,20 @@ if __name__ == '__main__':
     task_manifest = '/path/to/observations/CRAFTS/task_manifest_zd202x_1_1_2bit.json'
     data_path   = None                                      # 单目标模板替换用；非 None 时覆盖 data_paths
     data_paths  = [
-        '/data31/ZD2020_1_1_2bit/',
-        '/data31/ZD2021_1_1_2bit/',
-        '/data31/ZD2022_1_1_2bit/',
-        '/data31/ZD2023_1_1_2bit/',
-        '/data31/ZD2024_1_1_2bit/',
-        '/data32/ZD2025_1_1_2bit/',
+        '/path/to/CRAFTS/',
     ]
     save_base   = '/path/to/observations/CRAFTS/'
     beam_filter = 'all'                                     # 'M01' / 'M02' / 'all' / None
 
     # ---- 路径配置示例 ----
     # log_file    = './processing_log.txt'
-    # data_path   = '/data31/ZD2024_5/FRB20240114A/20250530/'
+    # data_path   = '/path/to/observations/source/date/'
     # save_base   = '/path/to/observations/'
     # beam_filter = 'M01'                                     # 'M01' / 'M02' / 'all' / None
 
     # 备用配置示例
-    # data_path   = '/data31/ZD2024_5/FRB20240114A/20250101/'
-    # data_path   = '/data31/ZD2024_1_1_2bit/'
+    # data_path   = '/path/to/another/source/date/'
+    # data_path   = '/path/to/CRAFTS/'
     if data_path is not None:
         data_paths = [data_path]
 

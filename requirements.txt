@@ -1,5 +1,5 @@
-# Common CPU-side dependencies for data generation, training, evaluation,
-# search orchestration, and paper-figure tooling.
+# Common CPU-side dependencies for data generation, model training,
+# inference, and search orchestration.
 numpy
 pandas
 scipy
@@ -14,10 +14,9 @@ opencv-python
 timm
 albumentations
 ultralytics
-requests
-beautifulsoup4
 torch
 torchvision
 
 # GPU search entry points also require a CuPy package matching the installed
 # CUDA toolkit (for example, cupy-cuda12x). Install that package separately.
+# The optional Numba benchmark backend additionally requires numba.

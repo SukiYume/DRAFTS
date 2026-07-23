@@ -20,8 +20,6 @@
 
 set -euo pipefail
 
-source /path/to/miniconda3/bin/activate base
-
 if [ "$#" -lt 2 ]; then
   echo "Usage: $0 \"<gpu_ids>\" <model>" >&2
   echo "  model: tiny | small | base | large | spp-tiny | spp-small" >&2

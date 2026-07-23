@@ -122,7 +122,27 @@ CUDA driver. Production-search notes are available in
 - [DRAFTS training data](https://huggingface.co/datasets/TorchLight/DRAFTS)
 - [DRAFTS pretrained models](https://huggingface.co/TorchLight/DRAFTS)
 
-Place downloads in the locations documented by the relevant workflow README.
+The current search runtime uses:
+
+| Task | File | SHA-256 |
+|---|---|---|
+| CenterNet ConvNeXt-Tiny detector v10 | `object_best_model_centernet_conv_tiny_ema_v10.pth` | `bcad4e710f5f1ccd3c8609d35a8d3fbfc36abd1d85bfefd035e945a573fb0629` |
+| ConvNeXt-Small binary classifier | `binary_best_model_conv_small_ema.pth` | `2055745aab76ddc16074516aa7b9aafdfaedf16df37ce8924389573eab27ffd8` |
+
+Download both files directly into `runcode/models/` for observation searches:
+
+```bash
+mkdir -p runcode/models
+curl -L \
+  -o runcode/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
+curl -L \
+  -o runcode/models/binary_best_model_conv_small_ema.pth \
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
+```
+
+Injection experiments use the same two files in the runtime location described
+in [`injection_experiment/README.md`](injection_experiment/README.md).
 
 ## Model training
 
@@ -166,7 +186,7 @@ EPOCHS=50 \
 The current search workflow commonly uses `convnext_small`; `convnext_tiny`
 remains a lighter deployment option. See
 [`binary_classification/README.md`](binary_classification/README.md) for data
-layout, metrics, and model comparisons.
+layout, model selection, and training arguments.
 
 ## Searching real observation data
 
@@ -185,10 +205,11 @@ Generic blind-search example:
 
 ```bash
 python runcode/t-blind-section.py \
-  --root /path/to/fast_observation \
+  --section 0 \
+  --data-path /path/to/fast_observation \
   --output-root /path/to/drafts_search_output \
   --gpu-num 1 \
-  --gpu-ids 0
+  --beam M01
 ```
 
 Place detector and classifier checkpoints in `runcode/models/` before running
@@ -226,7 +247,7 @@ python injection_experiment/run_injection_campaign.py \
   --gpu-num 8 \
   --gpu-ids 0,1,2,3,4,5,6,7 \
   --detector-type centernet_conv_tiny \
-  --detector-ckpt models/object_best_model_centernet_conv_tiny_ema.pth \
+  --detector-ckpt models/object_best_model_centernet_conv_tiny_ema_v10.pth \
   --classifier-ckpt models/binary_best_model_conv_small_ema.pth \
   --classifier-model-name convnext_small
 ```

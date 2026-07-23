@@ -3,14 +3,14 @@
 #
 # Example:
 #   ROOT=/path/to/drafts_runs/data_searching \
-#   DATA_PATH=/data31/ZD2023_5/FRB20220912A/20230926 \
+#   DATA_PATH=/path/to/observations/source/date \
 #   OUT_ROOT=/path/to/drafts_runs/object_backend \
 #   GPU_NUM=8 BACKENDS="cupy" MODELS="centernet_conv_tiny" SAVE_PLOT=0 \
 #     bash t-object-matrix.sh
 set -Eeuo pipefail
 
 ROOT="${ROOT:-/path/to/drafts_runs/runcode}"
-DATA_PATH="${DATA_PATH:-/data31/ZD2023_5/FRB20220912A/20230926}"
+DATA_PATH="${DATA_PATH:-/path/to/observations/source/date}"
 OUT_ROOT="${OUT_ROOT:-/path/to/drafts_runs/object_backend}"
 CONDA_SH="${CONDA_SH:-/path/to/miniforge3/etc/profile.d/conda.sh}"
 CONDA_ENV="${CONDA_ENV:-pytorch}"

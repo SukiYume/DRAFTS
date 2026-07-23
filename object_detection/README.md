@@ -1,123 +1,145 @@
-# CenterNet 检测器训练目录
+# DRAFTS CenterNet 检测器训练
 
-本目录训练 DRAFTS 第一阶段目标检测器。当前只维护 CenterNet 线，用于在 512 x 512 的 time-DM 图上定位候选中心；旧 YOLO 实验在上级 `bslocate/` 中保留，不属于当前搜索主线。
+本目录训练 DRAFTS 搜索链路的第一阶段模型：从 512 × 512 time–DM 图中定位暂现源
+候选中心，并将中心坐标转换为候选 TOA 与 DM。当前默认部署模型使用
+CenterNet + ConvNeXt-Tiny；公开权重位于
+[DRAFTS model repository](https://huggingface.co/TorchLight/DRAFTS)。
 
-## 文件职责
+## 目录职责
 
-| 文件或目录 | 作用 |
+| 文件 | 作用 |
 |---|---|
-| `centernet_train.py` | 单卡/DDP 训练入口，支持 EMA、AMP、resume、SWA 和日志落盘。 |
-| `centernet_data.py` | 读取 CenterNet H5 数据、构造 heatmap/offset target、训练/验证划分和增强。 |
-| `centernet_model.py` | CenterNet 模型构建，支持 `resnet18`、`convnext_tiny`、`convnext_small` backbone。 |
-| `centernet_eval.py` | heatmap 解码和中心距离匹配指标。 |
-| `centernet_infer.py` | 从验证集抽样推理并可视化检测中心。 |
-| `train.sh` | 多卡 DDP 包装脚本。 |
-| `Data/` | 当前训练 H5 与 annotations JSON。 |
-| `logs_v10/` | 当前保留的 v10 训练产物。 |
+| `centernet_data.py` | 扫描训练 H5，构造中心点监督、过采样和 mosaic/几何增强。 |
+| `centernet_model.py` | CenterNet、backbone、heatmap 与 offset loss。 |
+| `centernet_eval.py` | 解码中心点并计算 precision、recall、F1 和定位误差。 |
+| `centernet_train.py` | 单卡/DDP 训练入口，支持 AMP、EMA、resume 和 SWA。 |
+| `centernet_infer.py` | 对 validation 样本推理并绘制真值/预测中心。 |
+| `train.sh` | 统一多卡启动参数和模型别名。 |
 
-## 数据约定
+## 数据格式
 
-训练脚本默认读取 `./Data/`，可以用 `DATA_PATH` 或 `--data-path` 覆盖。当前本地数据包含：
+`centernet_data.py` 会扫描 `--data-path` 下所有 `.h5`。每个文件至少包含：
 
 ```text
-centernet_dataset_sim50000_max3.h5
-centernet_dataset_sim50000_max3_annotations.json
-centernet_dataset_sim20000_max3.h5
-centernet_dataset_sim20000_max3_annotations.json
-centernet_dataset_crafts_2020..2024.h5
-centernet_dataset_crafts_2020..2024_annotations.json
+images:      (N, 512, 512)
+annotations: (M, 5)
 ```
 
-生成新模拟数据时从 `../generate_burst/` 产生 H5 和 annotations JSON，再复制或链接到本目录 `Data/`。
+`annotations` 每行格式为：
+
+```text
+image_index, left, top, width, height
+```
+
+CenterNet 只预测中心 heatmap 与亚像素 offset；边框宽高用于生成中心监督和高斯半径，
+不会作为模型输出。训练集会按每帧目标数量及小目标存在情况过采样，validation 集保持
+原始分布。
+
+训练数据可由 [`../generate_burst/`](../generate_burst/) 生成。
+
+## 安装
+
+从仓库根目录安装通用依赖：
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+PyTorch、torchvision 和 CUDA 版本需要与训练节点匹配。
 
 ## 训练
 
-包装脚本用法：
+推荐通过 `train.sh` 启动：
 
 ```bash
-./train.sh "<gpu_ids>" <model>
-```
-
-可选模型：
-
-| 名称 | 传给训练脚本的 backbone |
-|---|---|
-| `centernet-resnet18` | `resnet18` |
-| `centernet-conv-tiny` | `convnext_tiny` |
-| `centernet-conv-small` | `convnext_small` |
-
-v10 训练口径示例：
-
-```bash
-DATA_PATH=./Data/v10_sim50000_only \
+cd object_detection
+DATA_PATH=/path/to/centernet_h5 \
 BATCH_SIZE=24 \
 EPOCHS=50 \
 ./train.sh "0,1,2,3,4,5,6,7" centernet-conv-tiny
 ```
 
-直接调用训练脚本：
-
-```bash
-torchrun --nproc_per_node=8 centernet_train.py \
-  --backbone convnext_tiny \
-  --data-path ./Data/v10_sim50000_only \
-  --log-dir logs_v10/logs_centernet_conv_tiny_sim50000 \
-  --batch-size 24 \
-  --epochs 50 \
-  --amp
-```
-
-## 当前保留的 v10 产物
-
-`logs_v10/args.json` 记录的关键配置：
-
-| 项 | 值 |
-|---|---|
-| data path | `./Data/v10_sim50000_only` |
-| backbone | `convnext_tiny` |
-| epochs | 50 |
-| world size | 8 |
-| batch size | 24 per GPU |
-| effective batch size | 192 |
-| eval distance threshold | 8 px |
-
-保留文件：
+可选别名：
 
 ```text
-logs_v10/best_model_ema.pth
-logs_v10/best_model.pth
-logs_v10/last_checkpoint.pth
-logs_v10/swa_model_ema.pth
-logs_v10/logs_centernet.json
-logs_v10/args.json
+centernet-resnet18
+centernet-conv-tiny
+centernet-conv-small
 ```
 
-最近日志尾部的验证指标约为 `f1_ema=0.943`，中心距离中位数约 `0.43 px`，`p90` 约 `2.30 px`。最终模型选择仍应结合真实搜索或注入评估表现。
+底层 Python 入口：
+
+```bash
+python centernet_train.py \
+  --data-path /path/to/centernet_h5 \
+  --backbone convnext_tiny \
+  --batch-size 24 \
+  --epochs 50 \
+  --log-dir /path/to/training_runs/centernet-conv-tiny
+```
+
+主要产物包括：
+
+```text
+best_model_ema.pth
+best_model.pth
+last_checkpoint.pth
+swa_model_ema.pth
+logs_centernet.json
+args.json
+```
+
+`best_model_ema.pth` 是常用部署候选。最终选择仍应结合独立 validation、真实观测搜索
+和注入实验的召回率、误报率及 TOA/DM 定位误差。
 
 ## 推理抽查
 
+先下载当前默认检测器：
+
+```bash
+curl -L \
+  -o /path/to/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
+```
+
+然后抽查 validation 图：
+
 ```bash
 python centernet_infer.py \
-  --weights logs_v10/best_model_ema.pth \
-  --data-path ./Data/v10_sim50000_only \
+  --weights /path/to/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
+  --data-path /path/to/centernet_h5 \
   --backbone convnext_tiny \
   --conf 0.3 \
   --start 0 \
   --end 30
 ```
 
-## 部署到搜索入口
+权重和 `--backbone` 必须一致。推理图用于检查中心偏移、漏检和重复候选，不能替代完整
+validation 指标。
 
-训练目录里的 checkpoint 不会自动被 `runcode/` 使用。部署时显式复制并命名：
+## 部署到 DRAFTS
 
-```bash
-cp logs_v10/best_model_ema.pth ../runcode/models/object_best_model_centernet_conv_tiny_ema_v10.pth
+真实观测搜索默认读取：
+
+```text
+runcode/models/object_best_model_centernet_conv_tiny_ema_v10.pth
 ```
 
-如果要替换生产默认别名，再复制为：
+注入实验默认读取：
 
-```bash
-cp logs_v10/best_model_ema.pth ../runcode/models/object_best_model_centernet_conv_tiny_ema.pth
+```text
+injection_experiment/search_runtime/models/object_best_model_centernet_conv_tiny_ema_v10.pth
 ```
 
-替换默认别名前，先确认 `runcode/` 盲搜、`injection_experiment/search_runtime/` 和任何远端部署脚本都指向同一权重版本。
+下载后保持文件名不变，或在入口中显式传入 `--detector-ckpt`，并使用
+`--detector-type centernet_conv_tiny`。
+
+## 常见问题
+
+| 现象 | 检查项 |
+|---|---|
+| 找不到训练样本 | 确认数据目录中存在含 `images` 与 `annotations` 的 H5。 |
+| checkpoint 形状不匹配 | 检查 `resnet18`、`convnext_tiny`、`convnext_small` 是否一致。 |
+| validation 候选过多 | 同时检查 `--conf`、`--topk` 和训练数据中的空背景比例。 |
+| 显存不足 | 减小 batch size；`train.sh` 也支持用 `BATCH_SIZE` 覆盖。 |
+| resume 失败 | `--resume` 需要包含 optimizer/scheduler 状态的完整 checkpoint。 |
