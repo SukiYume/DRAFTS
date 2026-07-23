@@ -1,0 +1,11 @@
+权重未随仓库复制。运行注入实验的搜索阶段前，把以下 .pth 放到本目录：
+
+  object_best_model_centernet_conv_tiny_ema_v10.pth # 检测器（默认 centernet_conv_tiny）
+  object_best_model_centernet_conv_tiny_ema.pth    # 可选：旧入口兼容名
+  binary_best_model_conv_small_ema.pth            # 二分类器（默认 convnext_small）
+  binary_best_model_conv_tiny_ema.pth             # 可选：classifier-model-name=convnext_tiny 时
+
+来源（原始位置）：
+  C:\Users\username\Desktop\WorkShop\LPT\bssearch\drafts_injection_paper\injection\search_runtime\models\
+（或远端对应目录）。检测器也可直接换成本套件 2_centernet_train 训出的最新 centernet 权重。
+注：本套件只保留 CenterNet 检测器权重，无需其它检测器权重。

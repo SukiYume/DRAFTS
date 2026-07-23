@@ -1,0 +1,22 @@
+# Installation commands for d-*.py entry scripts and their local imports.
+#
+# Covered entry points:
+# - d-center-binary-gate.py
+# - d-center-binary-core.py
+# - d-dm-time-predown.py
+#
+# Covered local imports:
+# - binary_model.py
+# - centernet_model.py
+# - centernet_eval.py
+#
+# Not included:
+# - t-* benchmark-only dependencies.
+#
+# Usage:
+#   conda activate <your-env>
+#   bash requirements.txt
+
+conda install -y -c conda-forge numpy astropy matplotlib seaborn tqdm cupy
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+pip install opencv-python

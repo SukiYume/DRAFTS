@@ -1,12 +1,23 @@
+# Common CPU-side dependencies for data generation, training, evaluation,
+# search orchestration, and paper-figure tooling.
 numpy
 pandas
 scipy
 scikit-image
 scikit-learn
+h5py
+astropy
+matplotlib
+seaborn
+tqdm
+opencv-python
+timm
+albumentations
+ultralytics
+requests
+beautifulsoup4
 torch
 torchvision
-tqdm
-seaborn
-matplotlib
-timm
-opencv-python
+
+# GPU search entry points also require a CuPy package matching the installed
+# CUDA toolkit (for example, cupy-cuda12x). Install that package separately.

@@ -1,0 +1,403 @@
+# DRAFTS 真实数据搜索入口
+
+本目录是一套可以拷到服务器独立运行的 FRB 单脉冲搜索 runtime。运行时只需要 Python/CUDA 环境、FAST FITS 数据、模型权重和输出目录。
+
+当前默认搜索链路是 **CenterNet ConvNeXt-Tiny detector v10 + ConvNeXt-Small binary classifier**。
+
+## 入口选择
+
+| 场景 | 推荐入口 | 说明 |
+|---|---|---|
+| 不想改源码，先测试一段盲搜 | `t-blind-section.py` | 命令行参数完整，适合单 section / 多 section 调试。 |
+| 固定配置生产盲搜 | `d-center-binary-gate.py` | 脚本底部写路径、模型和 GPU section；适合 PBS 渲染。 |
+| 已知 DM / 候选 DM follow-up | `d-dm-time-predown.py` | 固定 DM，多时间下采样倍率，binary 分类。 |
+| PBS 批量提交 | `s-pbsspt.py` | 生成并提交多 section 作业，也可渲染目标专用 gate 脚本。 |
+| detector 后端 benchmark | `t-object-bench.py` / `t-object-matrix.sh` | 只跑消色散、检测图和 detector，不跑 binary。 |
+| fixed-DM binary 对比 | `t-binary-bench.sh` | 比较不同 binary 分类器的真实输出。 |
+
+推荐先用 `t-blind-section.py --dry-run` 确认数据分片和输出路径，再跑实际搜索；生产批量再改 `d-center-binary-gate.py`，并用 `s-pbsspt.py` 提交 PBS。
+
+## 文件职责
+
+| 文件或目录 | 作用 |
+|---|---|
+| `d-center-binary-gate.py` | 两阶段盲搜调度入口：组织 FITS、section 切分、加载模型、断点日志、调用 core。 |
+| `d-center-binary-core.py` | 两阶段盲搜核心：CuPy 消色散、DM-time 图、CenterNet 检测、candidate cutout、binary 分类和保存。 |
+| `d-dm-time-predown.py` | fixed-DM follow-up：单 DM 消色散、多尺度图片生成、binary 分类。 |
+| `t-blind-section.py` | 命令行式盲搜 section wrapper。 |
+| `t-blind-batch.sh` | 多 GPU 盲搜批量测试 wrapper。 |
+| `t-object-bench.py` / `t-object-matrix.sh` | detector-only benchmark。 |
+| `t-binary-bench.sh` | fixed-DM binary 模型输出对比。 |
+| `s-pbsspt.py` | PBS 脚本生成、提交和状态查询。 |
+| `c-data-check.py` | 拼接若干 FITS 后画频率时间图，做数据检查。 |
+| `c-manifest-summary.py` | 汇总各 beam 输出目录下的 `candidate_manifest.jsonl` 为 CSV/JSON。 |
+| `extract_xz.sh` | 批量解压 `.xz` FITS。 |
+| `binary_model.py` | binary 分类器模型定义。 |
+| `centernet_model.py` / `centernet_eval.py` | CenterNet 构建和 heatmap 解码。 |
+| `models/` | 本目录默认读取的部署权重。 |
+| `requirements.txt` | 需要用 `bash` 执行的环境安装命令脚本。 |
+
+## 环境
+
+`requirements.txt` 是 shell 脚本，不能用 `pip install -r`：
+
+```bash
+conda activate pytorch
+bash requirements.txt
+```
+
+它会安装 `numpy`、`astropy`、`matplotlib`、`seaborn`、`tqdm`、`cupy`、`opencv-python`，并通过 PyTorch wheel URL 安装 `torch` / `torchvision`。如果机器 CUDA 版本不同，先按目标机器修改 PyTorch 的 `--index-url`。
+
+检查环境：
+
+```bash
+python - <<'PY'
+import torch, cupy
+print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.device_count())
+print(cupy.cuda.runtime.getDeviceCount())
+PY
+```
+
+## 模型权重
+
+当前本地 `models/` 里保留：
+
+```text
+object_best_model_centernet_conv_tiny_ema_v10.pth
+object_best_model_centernet_conv_tiny_ema.pth
+binary_best_model_conv_small_ema.pth
+binary_best_model_conv_tiny_ema.pth
+```
+
+其中无版本号的 detector 权重是历史文件保留项；当前入口默认只使用 v10 文件。
+
+当前默认：
+
+```python
+DETECTOR_TYPE = "centernet_conv_tiny"
+DETECTOR_CKPT = "./models/object_best_model_centernet_conv_tiny_ema_v10.pth"
+CLASSIFIER_MODEL_NAME = "convnext_small"
+CLASSIFIER_CKPT = "./models/binary_best_model_conv_small_ema.pth"
+```
+
+训练目录里的 checkpoint 不会自动生效。更换 detector 时，从 `../object_detection/logs_v10/best_model_ema.pth` 或其他训练日志目录复制到 `models/`，并同步修改入口脚本或命令行参数。更换 binary 分类器时，保持 `CLASSIFIER_MODEL_NAME` 与权重训练 backbone 一致。
+
+支持的 detector：
+
+```text
+centernet_conv_tiny
+centernet_conv_small
+```
+
+支持的 binary backbone：
+
+```text
+convnext_tiny
+convnext_small
+```
+
+## FITS 数据布局
+
+入口支持两类路径：
+
+```text
+source/date/*.fits
+source/date1/*.fits
+source/date2/*.fits
+```
+
+如果 `data_path` 直接包含 FITS，脚本按文件名中的 `-Mxx_` 聚合 beam。如果 `data_path` 指向 source 根目录，脚本递归扫描日期子目录。`beam_filter='M01'` 或 `--beam M01` 只跑 M01，`all` 跑全部 beam。
+
+脚本会跳过文件名中包含 `_N_`、`_W_`、`_F_` 的 FITS。
+
+## 未知 DM 盲搜
+
+### 命令行 section 测试
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python t-blind-section.py \
+  --section 0 \
+  --gpu-num 1 \
+  --data-path /data31/ZD2024_5/FRB20240114A/20250530 \
+  --output-root /path/to/drafts_runs/blind \
+  --beam M01 \
+  --detector-type centernet_conv_tiny \
+  --detector-ckpt models/object_best_model_centernet_conv_tiny_ema_v10.pth \
+  --classifier-ckpt models/binary_best_model_conv_small_ema.pth \
+  --dm-range 4096 \
+  --dm-scale 1 \
+  --dm-offset 0 \
+  --dm-threshold 10 \
+  --block-size 4096 \
+  --dm-span 1024 \
+  --det-prob 0.40
+```
+
+常用参数：
+
+| 参数 | 默认 | 含义 |
+|---|---:|---|
+| `--gpu-num` | 8 | section 总数。单卡调试设为 1。 |
+| `--dm-range` | 4096 | DM index 数量。 |
+| `--dm-scale` | 1.0 | 每个 DM index 对应的 pc cm^-3 步长。 |
+| `--dm-offset` | 0.0 | DM 起点。 |
+| `--dm-threshold` | 50.0 | 低于该 DM 的候选丢弃。生产 CRAFTS gate 当前显式设为 10。 |
+| `--block-size` | 8192 | 每个时间块的降采样后样本数。生产 CRAFTS gate 当前显式设为 4096。 |
+| `--dm-span` | 1024 | 每张检测图覆盖的 DM 点数。 |
+| `--det-prob` | 0.45 | CenterNet 候选阈值。生产 CRAFTS gate 当前显式设为 0.40。 |
+| `--time-factor` | 8.0 | FITS 时间降采样率。 |
+
+多 GPU 可以分别提交 `--section 0..gpu_num-1`，或使用 `t-blind-batch.sh`。`--gpu-num` 在这里表示总 section 数，不一定等于物理 GPU 数。
+
+开发节点上直接跑多 section 示例：
+
+```bash
+ROOT=/path/to/drafts_runs/data_searching \
+OUTPUT_ROOT=/path/to/drafts_runs/blind \
+BEAM=all GPU_NUM=8 \
+DM_THRESHOLD=10 BLOCK_SIZE=4096 DM_SPAN=1024 DET_PROB=0.40 \
+  bash t-blind-batch.sh /data31/ZD2024_1_1_2bit/
+```
+
+`mu01` 这类 gate 节点不要直接跑 `t-blind-batch.sh`，用 `s-pbsspt.py` 提交 PBS。
+
+### 固定配置 gate
+
+`d-center-binary-gate.py` 底部当前默认：
+
+```python
+process_config = ProcessConfig(
+    dm_range=4096,
+    dm_scale=1,
+    dm_offset=0,
+    dm_threshold=10,
+    block_size=4096,
+    dm_span=1024,
+    det_prob=0.40,
+    section_num=32,
+    time_factor=8,
+)
+
+data_path = None
+data_paths = [
+    "/data31/ZD2020_1_1_2bit/",
+    "/data31/ZD2021_1_1_2bit/",
+    "/data31/ZD2022_1_1_2bit/",
+    "/data31/ZD2023_1_1_2bit/",
+    "/data31/ZD2024_1_1_2bit/",
+    "/data32/ZD2025_1_1_2bit/",
+]
+save_base = "/path/to/observations/CRAFTS/"
+beam_filter = "all"
+```
+
+直接运行某个 section：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python d-center-binary-gate.py 0
+```
+
+`processing_log_zd202x_1_1_2bit.txt` 记录已完成 identifier。重跑全集前删除对应日志：
+
+```bash
+rm -f processing_log_zd202x_1_1_2bit.txt
+```
+
+未在完成日志中的 beam 级任务重跑前会自动删除该 beam 的旧输出目录；单次观测的 section 分段不执行自动清理。
+
+## 盲搜输出
+
+盲搜输出布局：
+
+```text
+<output-root>/<source>/CentData/<date>/<beam>/
+```
+
+典型文件：
+
+```text
+FRB20220912A_tracking-M01_0352-TS00-FS1-BX0-DM228.0.jpg
+FRB20220912A_tracking-M01_0352-TS00-FS1.npy
+candidate_manifest.jsonl
+```
+
+字段含义：
+
+| 字段 | 含义 |
+|---|---|
+| `0352` | 起始 FITS 文件号。 |
+| `TS00` | 时间 slice 编号。 |
+| `FS1` | 频带拆分通道。 |
+| `BX0` | 检测图中的候选编号。 |
+| `DM228.0` | 检测器中心换算出的 DM。 |
+
+`candidate_manifest.jsonl` 每行记录一个通过 detector + binary 阈值的候选。关键字段：
+
+| 字段 | 含义 |
+|---|---|
+| `root` / `source` / `date` / `beam` | 候选所属数据根、源目录、日期和 beam。 |
+| `block_start_mjd` | 搜索 block 起始 FITS 的 MJD。 |
+| `toa_sec` | 候选相对 `block_start_mjd` 的秒数。 |
+| `signal_mjd` | 候选绝对 MJD，等于 `block_start_mjd + toa_sec / 86400`。 |
+| `dm` | 检测图中心换算出的 DM，可用于初步切出信号。 |
+| `jpg_path` / `npy_path` | 对应 review 图和 DM-time numpy 文件。 |
+
+合并所有 beam 的 manifest：
+
+```bash
+python c-manifest-summary.py \
+  --root /path/to/observations/CRAFTS \
+  --csv c-candidates-zd202x.csv \
+  --json c-candidates-zd202x.json
+```
+
+后续用 `data_processing` 切原始数据时，先用 `signal_mjd` 减去整次观测起始 MJD：
+
+```python
+cut_toa_sec = (signal_mjd - obs_start_mjd) * 86400.0
+```
+
+生产运行建议写到独立运行目录，不要把新输出混入 `../output/search/` 的样例目录。
+
+## Fixed-DM Follow-up
+
+`d-dm-time-predown.py` 适合：
+
+- 已知重复源 DM，回看一批观测。
+- 盲搜发现候选后，在候选 DM 附近复查。
+- 比较不同 binary 分类器和时间下采样倍率。
+
+脚本底部需要修改：
+
+```python
+config = ProcessConfig(
+    DM=273.5,
+    prob=0.5,
+    block_size=512,
+    section_num=15,
+    down_sampling_rate_list=np.array([2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]),
+)
+
+classifier_ckpt = "./models/binary_best_model_conv_small_ema.pth"
+data_path = "/data31/PT2024_0263/GPM_J1839-10/"
+save_base = "/path/to/observations/"
+beam_filter = "M01"
+```
+
+运行：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python d-dm-time-predown.py 0
+```
+
+Fixed-DM 输出布局：
+
+```text
+<save_base>/<source>/CalData/<date>/<beam>/<down_sampling_rate>/
+```
+
+典型文件：
+
+```text
+FRB20240114A_tracking-M01_0086-0014-550.453248.jpg
+FRB20240114A_tracking-M01_0086-0014.npy
+```
+
+## 数据准备
+
+解压 `.xz`：
+
+```bash
+./extract_xz.sh /path/to/xz_dir/ /path/to/fits/
+./extract_xz.sh /path/to/xz_dir/ /path/to/fits/ all
+./extract_xz.sh ./files.txt /path/to/fits/
+CONCURRENT_TASKS=20 ./extract_xz.sh /path/to/xz_dir/ /path/to/fits/
+```
+
+快速检查 FITS：
+
+```bash
+python c-data-check.py 0
+```
+
+`0` 表示 M01，`1` 表示 M02。使用前先改脚本底部的数据路径和输出目录。
+
+## PBS 批量提交
+
+`s-pbsspt.py` 将 `node_config` 展开成连续 section，每块 GPU（每次 qsub）生成一个 PBS 脚本并提交。关键配置：
+
+```python
+root_path = "/path/to/runtime/"
+script_name = "d-center-binary-gate.py"
+node_config = {13: 8}       # {节点号: GPU数}
+job_name = "zd2bit"
+workers_per_gpu = 4         # 每块 GPU 上并发跑几个 section（1~4）
+```
+
+`workers_per_gpu > 1` 时，同一次 qsub 只申请 1 块 GPU，脚本内部用后台进程并发跑多个 section
+（各自输出到独立日志文件），共享这一块 GPU。`sum(node_config.values()) * workers_per_gpu`
+必须等于入口脚本中的 `section_num`。当前生产配置是 `8 * 4 = 32`，对应
+`d-center-binary-gate.py` 的 `section_num=32`。
+
+常用命令：
+
+```bash
+python s-pbsspt.py --dry-run
+python s-pbsspt.py
+python s-pbsspt.py --status
+qstat -u $USER
+```
+
+## Benchmark 工具
+
+Detector-only：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python t-object-bench.py \
+  --backend cupy \
+  --detector-type centernet_conv_tiny \
+  --detector-ckpt models/object_best_model_centernet_conv_tiny_ema_v10.pth \
+  --data-path /data31/ZD2023_5/FRB20220912A/20230926 \
+  --output-root /path/to/drafts_runs/object_backend \
+  --dm-range 4096 \
+  --dm-scale 1 \
+  --dm-offset 0 \
+  --dm-threshold 10 \
+  --block-size 4096 \
+  --detect-dm-span 1024 \
+  --det-prob 0.40
+```
+
+多组合矩阵：
+
+```bash
+ROOT=/path/to/drafts_runs/data_searching \
+DATA_PATH=/data31/ZD2023_5/FRB20220912A/20230926 \
+OUT_ROOT=/path/to/drafts_runs/object_backend \
+GPU_NUM=4 BACKENDS="cupy" MODELS="centernet_conv_tiny" SAVE_PLOT=0 \
+  bash t-object-matrix.sh
+```
+
+Fixed-DM binary 对比：
+
+```bash
+bash t-binary-bench.sh
+bash t-binary-bench.sh --summarize-only
+```
+
+旧 object benchmark 结论是：在 32 进程并发读同一批 FITS 时端到端主要受 I/O 限制；CuPy 消色散段明显快于 Numba，但总 wall time 不能只看 GPU kernel。
+
+## 排错
+
+| 现象 | 检查项 |
+|---|---|
+| `node_config` 数量不匹配 | 调整 `node_config` / `workers_per_gpu`，或入口脚本的 `section_num`。 |
+| `Unknown detector_type` | 检查是否为 `centernet_conv_tiny` 或 `centernet_conv_small`。 |
+| detector 权重加载失败 | 检查 detector 类型、backbone 和 checkpoint 是否对应。 |
+| classifier 权重加载失败 | 检查 `convnext_tiny` / `convnext_small` 是否与权重一致。 |
+| 找不到 FITS | 检查 `data_path`、文件名中的 `-Mxx_`、`beam_filter` / `--beam`。 |
+| 所有任务都跳过 | 删除对应 `processing_log*.txt`。 |
+| CUDA OOM | 减小 `dm_range` 或 `block_size`，或降低同一 GPU 上并发进程数。 |
+| 输出目录混有旧结果 | 换新的输出目录，或清理目标目录后重跑。 |
+| `pip install -r requirements.txt` 报错 | 这是 shell 安装脚本，请用 `bash requirements.txt`。 |
+| 新服务器 `models/` 为空 | 从训练机器复制权重，再确认脚本指向的文件名。 |

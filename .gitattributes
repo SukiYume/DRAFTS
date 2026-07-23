@@ -1,0 +1,27 @@
+* text=auto
+
+*.py text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.jsonl text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.csv text eol=lf
+*.tex text eol=lf
+*.bib text eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.h5 binary
+*.hdf5 binary
+*.fits binary
+*.npy binary
+*.npz binary
+*.pth binary
+*.pt binary
+*.ckpt binary
