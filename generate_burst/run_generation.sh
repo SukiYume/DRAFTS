@@ -2,14 +2,14 @@
 set -euo pipefail
 
 # 全部路径以脚本所在目录为根，自包含。把整个 gendata 目录拷到哪都能直接跑：
-#   gendata/ 下需有：本脚本、generate/merge/inspect.py、
-#                    frb_sim.py、d-center-binary-core.py、
+#   gendata/ 下需有：本脚本、generate_dataset.py、merge_shards.py、
+#                    inspect_dataset.py、simulation_utils.py、d-center-binary-core.py、
 #                    rawdata/（背景 FITS）。中间产物/输出也都写在 gendata 下。
 # 需要时可用环境变量覆盖任意一项（如 GEN_ROOT=/somewhere RAW_DIR=... PY=python3）。
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GEN_ROOT="${GEN_ROOT:-${SCRIPT_DIR}}"
 RAW_DIR="${RAW_DIR:-${GEN_ROOT}/rawdata}"
-# frb_sim.py、d-center-binary-core.py 固定与生成脚本同目录，不再传 --injection-dir / --runtime-dir。
+# simulation_utils.py、d-center-binary-core.py 固定与生成脚本同目录，不再传 --injection-dir / --runtime-dir。
 BASE_DIR="${GEN_ROOT}/shards_50000"
 FINAL_H5="${GEN_ROOT}/centernet_dataset_sim50000_max3.h5"
 PY="${PY:-python}"                                   # 用当前环境的 python；可用 PY=... 覆盖
@@ -52,7 +52,7 @@ run_shard() {
 
   rm -f "${out}" "${out%.h5}.config.json" "${out%.h5}.metadata.jsonl" "${log}"
   echo "[launch] shard=${shard_id} gpu=${gpu} scene_output=${scene_output} seed=${seed} out=${out}" | tee "${log}"
-  CUDA_VISIBLE_DEVICES="${gpu}" "${PY}" generate_multifit_time_dm_h5.py \
+  CUDA_VISIBLE_DEVICES="${gpu}" "${PY}" generate_dataset.py \
     --rawdata-dir "${RAW_DIR}" \
     --work-dir "${GEN_ROOT}" \
     --output "${out}" \
@@ -130,13 +130,13 @@ for ((shard = 0; shard < SHARD_COUNT; shard++)); do
 done
 
 rm -f "${FINAL_H5}" "${FINAL_H5%.h5}.config.json" "${FINAL_H5%.h5}.metadata.jsonl" "${FINAL_H5%.h5}.inspect.json"
-"${PY}" merge_time_dm_h5.py \
+"${PY}" merge_shards.py \
   --output "${FINAL_H5}" \
   --inputs "${inputs[@]}" \
   --gzip-level 1 \
   --max-objects-per-image "${MAX_OBJECTS_PER_IMAGE}" | tee "${FINAL_H5%.h5}.merge.log"
 
-"${PY}" inspect_time_dm_h5.py \
+"${PY}" inspect_dataset.py \
   "${FINAL_H5}" \
   --samples 36 \
   --seed 789 \

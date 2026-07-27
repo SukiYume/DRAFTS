@@ -1,7 +1,7 @@
 """分批运行 raw8/packed2 注入评估和 DRAFTS 搜索。
 
 中文维护说明：本文件是注入实验的主控入口，负责按 batch 调用注入、DL 搜索、
-单批匹配分析和跨批汇总；真正的 FITS 注入在 `inject_fits.py`，真正的 GPU 搜索在
+单批匹配分析和跨批汇总；真正的 FITS 注入在 `generate_injections.py`，真正的 GPU 搜索在
 `search_runtime/`。当前默认搜索配置固定为 v10 CenterNet、det_prob=0.30、
 classifier 输入 1024 个采样点并额外做 2 倍时间降采样。
 
@@ -357,7 +357,7 @@ def build_batches(args: argparse.Namespace, dirs: CampaignDirs) -> list[BatchPat
 
 def build_inject_cmd(args: argparse.Namespace, dirs: CampaignDirs, batch: BatchPaths) -> list[str]:
     return [
-        args.python, str(HERE / "inject_fits.py"),
+        args.python, str(HERE / "generate_injections.py"),
         "--background-dir", str(args.background_dir),
         "--output-root", str(dirs.sim),
         "--run-label", batch.label,
@@ -403,7 +403,7 @@ def build_search_cmd(
 def build_analyze_cmd(args: argparse.Namespace, dirs: CampaignDirs, batch: BatchPaths, quantization: str) -> list[str]:
     run_label = f"{batch.label}_{quantization}"
     cmd = [
-        args.python, str(HERE / "analyze_search_results.py"),
+        args.python, str(HERE / "evaluate_results.py"),
         "--truth", str(dirs.truth / run_label / "truth_manifest.jsonl"),
         "--candidates", str(dirs.search / run_label / "candidate_manifests"),
         "--output-dir", str(dirs.analysis / run_label),
@@ -422,7 +422,7 @@ def build_analyze_cmd(args: argparse.Namespace, dirs: CampaignDirs, batch: Batch
 
 def build_aggregate_cmd(args: argparse.Namespace, dirs: CampaignDirs) -> list[str]:
     return [
-        args.python, str(HERE / "aggregate_campaign_results.py"),
+        args.python, str(HERE / "aggregate_results.py"),
         "--analysis-root", str(dirs.analysis),
         "--output-dir", str(dirs.aggregate),
     ]

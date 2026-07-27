@@ -33,13 +33,13 @@ except ImportError:  # Remote generation can still run with the centered physica
 
 
 # 默认路径全部相对脚本所在目录（gendata）——本套件自包含，不依赖外部绝对路径。
-# 需要的代码文件（frb_sim.py、d-center-binary-core.py）和数据（rawdata/、channel_std 缓存）
+# 需要的代码文件（simulation_utils.py、d-center-binary-core.py）和数据（rawdata/、channel_std 缓存）
 # 都放在脚本同目录或其子目录下即可。命令行仍可覆盖。
 _HERE = Path(__file__).resolve().parent      # 自包含：代码 + 数据都在脚本同目录或其子目录
 DEFAULT_RAWDATA_DIR = _HERE / "rawdata"      # 原始 FAST 背景 FITS（可用 --rawdata-dir 覆盖）
 DEFAULT_OUTPUT = _HERE / "multifit_tdm_200k.h5"
 DEFAULT_WORK_DIR = _HERE                     # std 缓存等中间产物
-# frb_sim.py、d-center-binary-core.py 固定在脚本同目录 _HERE，不再单独配置 injection/runtime 路径。
+# simulation_utils.py、d-center-binary-core.py 固定在脚本同目录 _HERE，不再单独配置 injection/runtime 路径。
 DEFAULT_COUNT = 200_000  # h5 images = unique_signals(50000) * crops_per_signal(4)
 DEFAULT_SIGNALS_PER_BATCH = 500
 DEFAULT_SIGNALS_PER_SCENE = 3
@@ -184,17 +184,17 @@ def write_jsonl(path: Path, rows: Iterable[dict]) -> None:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
 
 
-def add_injection_imports():
-    """导入合并后的支撑库 frb_sim，返回 (inj, model)——两者指向同一模块。
+def load_simulation_utils():
+    """导入合并后的支撑库 simulation_utils，返回 (inj, model)——两者指向同一模块。
 
-    frb_sim 同时包含 FRB 模型（model 用：gaussian/scattered/DM_DELAY）和 FAST 背景工具
+    simulation_utils 同时包含 FRB 模型（model 用：gaussian/scattered/DM_DELAY）和 FAST 背景工具
     （inj 用：list_background_fits/read_metadata/estimate_global_channel_std 等），所以
     返回两份同一引用即可，主流程里 ``inj.``/``model.`` 的写法保持不变。
     """
     sys.path.insert(0, str(_HERE))
-    import frb_sim  # noqa: PLC0415
+    import simulation_utils  # noqa: PLC0415
 
-    return frb_sim, frb_sim
+    return simulation_utils, simulation_utils
 
 
 def load_runtime_core():
@@ -1220,7 +1220,7 @@ def main() -> None:
     if args.signals_per_scene > args.max_objects_per_image:
         raise SystemExit("--signals-per-scene cannot exceed --max-objects-per-image")
 
-    inj, model = add_injection_imports()
+    inj, model = load_simulation_utils()
     core = load_runtime_core()
     files = inj.list_background_fits(args.rawdata_dir, args.file_first, args.file_last)
     meta = inj.read_metadata(files[0])
@@ -1306,7 +1306,7 @@ def main() -> None:
     annotation_rows: list[list[float]] = []
     image_idx = 0
     with create_h5(args.output, args.count, args.gzip_level) as h5:
-        h5.attrs["generator"] = "generate_multifit_time_dm_h5.py"
+        h5.attrs["generator"] = "generate_dataset.py"
         h5.attrs["run_label"] = args.run_label
         h5.attrs["seed"] = args.seed
         for scene in scenes:

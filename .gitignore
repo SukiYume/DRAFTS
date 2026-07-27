@@ -17,7 +17,10 @@ htmlcov/
 venv/
 env/
 .python-version
-.claude/settings.local.json
+
+# Local AI-assistant state; repository instructions such as CLAUDE.md stay visible.
+.claude/
+.codex/
 
 # Editors and operating-system metadata
 .idea/
@@ -70,6 +73,7 @@ shards_*/
 # Local-only or retired code/results
 /runcode/legacy/
 /runcode/d-dm-time-predown-121102.py
+/binary_classification/nenufar_eval_*/
 /binary_classification/resolution_eval_*/
 /output/
 

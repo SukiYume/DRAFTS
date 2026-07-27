@@ -7,10 +7,10 @@
    文件里的候选放到同一条时间轴上（见 ``candidate_file_index`` /
    ``match_candidates``）。
 3. 用 ``build_candidate_events`` 把同一信号在不同 frequency split / DM chunk /
-   邻近像素上产生的多个候选，贪心聚类成"检测事件"。后续 recall 和误报都以
-   **事件**为单位，而不是以候选行为单位。
-4. ``match_candidates``：每个注入真值按"源级关联容差"匹配最优、且尚未被占用
-   的事件 → 命中即 recall 计入；同时记录是否满足更严格的定位容差。未匹配上的
+   邻近像素上产生的多个候选聚类成"检测事件"，并限制事件的整体 DM/时间直径，
+   防止 single-linkage 桥接两个真实事件。后续 recall 和误报都以**事件**为单位。
+4. ``match_candidates``：在"源级关联容差"内做最大基数、最小代价的 truth-event
+   二分图匹配 → 命中即 recall 计入；同时记录是否满足更严格的定位容差。未匹配上的
    事件若不靠近任何注入源，则记为误报。
 5. 输出 matches.csv / false_positives.csv、按参数分箱的 recall、若干 recall 曲线
    和 S/N–DM 召回热图、以及 summary_metrics.json。
@@ -24,7 +24,7 @@
   源级关联容差内就不算误报。每批注入很密集，会让一部分本应算误报的事件被漏算，
   使 precision 偏乐观。这两点方向相反，解读 precision 时需同时记住。
 * 本文件只输出 ``false_positive_count``；真正的 precision_proxy 在
-  aggregate_campaign_results.py 里跨批汇总计算。
+  aggregate_results.py 里跨批汇总计算。
 """
 
 from __future__ import annotations
@@ -42,6 +42,8 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
+
+from matching import maximum_cardinality_min_cost_matching
 
 
 # FAST L 波段总带宽（MHz），用于把注入带宽换算成"有效通道数"
@@ -198,7 +200,7 @@ def build_candidate_events(
     dm_tolerance: float,
     time_tolerance_samples: int,
 ) -> list[CandidateEvent]:
-    """把分类后的候选贪心去重成检测事件。"""
+    """把分类后的候选去重成事件，并限制每个事件的整体 DM/时间直径。"""
     events: list[CandidateEvent] = []
     ordered = sorted(
         ((index, cand) for index, cand in candidates_with_global),
@@ -206,11 +208,30 @@ def build_candidate_events(
     )
     for index, cand in ordered:
         cand = {**cand, "_candidate_index_global": index}
-        matched_event = None
-        for event in events:
-            if any(candidate_close(cand, member, dm_tolerance, time_tolerance_samples) for member in event.members):
-                matched_event = event
-                break
+        compatible = [
+            event
+            for event in events
+            if all(
+                candidate_close(cand, member, dm_tolerance, time_tolerance_samples)
+                for member in event.members
+            )
+        ]
+        matched_event = min(
+            compatible,
+            key=lambda event: (
+                abs(
+                    float(cand["pred_dm_pc_cm3"])
+                    - float(event.representative["pred_dm_pc_cm3"])
+                )
+                / max(float(dm_tolerance), 1e-6)
+                + abs(
+                    int(cand["_pred_toa_global_raw_sample"])
+                    - int(event.representative["_pred_toa_global_raw_sample"])
+                )
+                / max(int(time_tolerance_samples), 1)
+            ),
+            default=None,
+        )
         if matched_event is None:
             events.append(CandidateEvent(event_id=len(events), representative=cand, members=[cand]))
         else:
@@ -388,25 +409,36 @@ def match_candidates(
     event_time_samples = max(1, int(round(event_time_ms / dt_scale_ms0)))
     candidate_events = build_candidate_events(candidates_with_global, event_dm_tol, event_time_samples)
 
-    # 3) 每个真值匹配最优且未被占用的事件 → 命中（recall）
-    used_events: set[int] = set()
-    matches = []
-    for truth in truth_rows:
-        truth = add_derived_truth_metrics(truth)
+    # 3) 构建 truth-event 合法边，先最大化命中数，再最小化总关联代价。
+    derived_truths = [add_derived_truth_metrics(truth) for truth in truth_rows]
+    match_edges: list[tuple[int, int, float]] = []
+    edge_payload: dict[tuple[int, int], tuple[dict, float, int]] = {}
+    for truth_index, truth in enumerate(derived_truths):
         dt_scale_ms = float(truth["time_reso_seconds"]) * 1e3
-        strict_tol_samples = max(1, int(round(time_tolerance_ms / dt_scale_ms)))
         source_tol_samples = max(1, int(round(source_time_ms / dt_scale_ms)))
-        best = None
-        for event in candidate_events:
-            if event.event_id in used_events:
-                continue
-            event_match = event_match_to_truth(event, truth, source_dm_tol, source_tol_samples)
+        for event_index, event in enumerate(candidate_events):
+            event_match = event_match_to_truth(
+                event, truth, source_dm_tol, source_tol_samples
+            )
             if event_match is None:
                 continue
             rank, cand, dm_error, time_error_samples = event_match
-            if best is None or rank < best[0]:
-                best = (rank, event, cand, dm_error, time_error_samples)
-        if best is None:
+            match_edges.append((truth_index, event_index, rank))
+            edge_payload[(truth_index, event_index)] = (
+                cand,
+                dm_error,
+                time_error_samples,
+            )
+
+    assignments = maximum_cardinality_min_cost_matching(
+        len(derived_truths), len(candidate_events), match_edges
+    )
+    matches = []
+    for truth_index, truth in enumerate(derived_truths):
+        dt_scale_ms = float(truth["time_reso_seconds"]) * 1e3
+        strict_tol_samples = max(1, int(round(time_tolerance_ms / dt_scale_ms)))
+        event_index = assignments.get(truth_index)
+        if event_index is None:
             matches.append({
                 **truth,
                 "detected": False,
@@ -426,8 +458,10 @@ def match_candidates(
                 "plot_path": "",
             })
         else:
-            _, event, cand, dm_error, time_error_samples = best
-            used_events.add(event.event_id)
+            event = candidate_events[event_index]
+            cand, dm_error, time_error_samples = edge_payload[
+                (truth_index, event_index)
+            ]
             localized = abs(dm_error) <= dm_tolerance and abs(time_error_samples) <= strict_tol_samples
             matches.append({
                 **truth,

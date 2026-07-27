@@ -10,10 +10,11 @@ truth manifests live in the experiment-level `truth_archive/` directory.  DL
 
 | Path | Purpose |
 | --- | --- |
-| `presto_blind_campaign.py` | Run the full blind PRESTO search, cluster candidates into events, and write aggregate tables. |
-| `export_presto_threshold_package.py` | Export a compact local threshold-sweep package from the full event table. |
-| `presto_threshold_sweep.py` | Recompute metrics and figures for sigma thresholds from the compact package. |
-| `presto_common.py` | Shared parameter bins, truth/event matching, CSV helpers, and the only PRESTO plotting implementation. |
+| `run_search.py` | Run the full blind PRESTO search, cluster candidates into events, and write aggregate tables. |
+| `export_threshold_data.py` | Export a compact local threshold-sweep package from the full event table. |
+| `sweep_thresholds.py` | Recompute metrics and figures for sigma thresholds from the compact package. |
+| `search_utils.py` | Shared parameter bins, CSV helpers, and the only PRESTO plotting implementation. |
+| `../matching.py` | Sparse maximum-cardinality/minimum-cost truth-event matching shared with the DRAFTS analysis. |
 
 ## Requirements
 
@@ -52,6 +53,12 @@ The full campaign repeats the `prepsubband` block from DM 100 to 2000 in
 batch/quantization directory are searched, so events from files without
 injected truth are counted as false positives.
 
+Event clustering enforces the configured DM/time tolerance across the full
+event diameter, preventing single-link bridges. Truth and events are then
+assigned one-to-one with maximum cardinality first and minimum normalized
+distance second; input ordering cannot reduce an otherwise achievable match
+count.
+
 Each searched FITS is the center of a short context window.  The default
 `--context-left-files 1 --context-right-files 1` gives PRESTO one neighboring
 segment on both sides so high-DM de-dispersion is not truncated at the
@@ -76,7 +83,7 @@ STAMP="$(date +%Y%m%d_%H%M%S)"
 OUT_ROOT="${OUT_ROOT:-$PWD/results/presto_blind_full_$STAMP}"
 mkdir -p logs
 
-python presto_blind_campaign.py \
+python run_search.py \
   --sim-root ../simdata \
   --truth-root ../truth_archive \
   --output-root "$OUT_ROOT" \
@@ -128,7 +135,7 @@ The full campaign does not create a threshold-sweep package automatically.
 Export a compact package from a completed result root:
 
 ```bash
-python export_presto_threshold_package.py \
+python export_threshold_data.py \
   --result-root "$OUT_ROOT" \
   --output-dir "$OUT_ROOT/threshold_sweep_package" \
   --source-dm-tolerance 60 \
@@ -140,7 +147,7 @@ histograms, and metadata. Recompute metrics and figures without rerunning
 PRESTO:
 
 ```bash
-python presto_threshold_sweep.py \
+python sweep_thresholds.py \
   --package-dir "$OUT_ROOT/threshold_sweep_package" \
   --output-dir "$OUT_ROOT/threshold_sweeps" \
   --thresholds 3,5,7 \

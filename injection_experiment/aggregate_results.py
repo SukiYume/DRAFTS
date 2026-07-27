@@ -12,7 +12,7 @@
 
 重要口径说明：背景是真实望远镜数据，含真实暴发和 RFI，所以 precision_proxy 把
 "算法真误报"和"背景真实信号"混在一起，不是干净的算法精确率，解读时需谨慎
-（详见 analyze_search_results.py 顶部说明）。
+（详见 evaluate_results.py 顶部说明）。
 """
 
 from __future__ import annotations

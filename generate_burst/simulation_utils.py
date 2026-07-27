@@ -1,12 +1,12 @@
-"""time-DM 训练数据生成的支撑库（由 frb_model.py + 精简版 inject_fits.py 合并而来）。
+"""time-DM 训练数据生成的模拟信号与 FAST 背景数据工具。
 
 两块内容、一个模块：
   A. FRB 动态谱模型     —— 频率高斯包络、（散射）高斯时间 profile、色散延迟常数
   B. FAST 背景数据工具  —— 背景 FITS 发现、头信息读取/校验、每通道噪声 std 估计
 
-generate_multifit_time_dm_h5.py 把本模块同时当作 ``model``（用 A）和 ``inj``（用 B）。
-原 inject_fits 的"注入→写 raw8/2-bit FITS→搜索"独立 CLI 在本流程用不到，已不包含；
-若需完整注入器请用远端 injection 目录下的原版 inject_fits.py。
+generate_dataset.py 把本模块同时当作 ``model``（用 A）和 ``inj``（用 B）。
+完整的“注入→写 raw8/2-bit FITS→搜索”流程不在本模块中；若需该流程，请使用
+`injection_experiment/generate_injections.py` 和 `injection_experiment/run_campaign.py`。
 """
 
 from __future__ import annotations

@@ -23,6 +23,7 @@ CenterNet + ConvNeXt-Tiny；公开权重位于
 ```text
 images:      (N, 512, 512)
 annotations: (M, 5)
+original_slice: (N,)
 ```
 
 `annotations` 每行格式为：
@@ -32,8 +33,11 @@ image_index, left, top, width, height
 ```
 
 CenterNet 只预测中心 heatmap 与亚像素 offset；边框宽高用于生成中心监督和高斯半径，
-不会作为模型输出。训练集会按每帧目标数量及小目标存在情况过采样，validation 集保持
-原始分布。
+不会作为模型输出。`original_slice` 是生成阶段写入的原始 scene/slice 标识。加载器先
+按 `(H5 绝对路径, original_slice)` 分组，再把完整组分到 train 或 validation；同一
+scene 的 mosaic/crop 帧不会跨集合。只有完成分组拆分后的 train 行才按目标数量和小目标
+存在情况过采样，validation 始终保持原始分布。缺少 `original_slice` 时加载器会直接
+报错，避免退回可能泄漏的逐帧随机拆分。
 
 训练数据可由 [`../generate_burst/`](../generate_burst/) 生成。
 
@@ -115,7 +119,8 @@ python centernet_infer.py \
 ```
 
 权重和 `--backbone` 必须一致。推理图用于检查中心偏移、漏检和重复候选，不能替代完整
-validation 指标。
+validation 指标。评估时，每个预测会与容差内“尚未使用且距离最近”的真值匹配；不会
+因为最近真值已被占用，就漏掉同样合法的次近真值。
 
 ## 部署到 DRAFTS
 
@@ -138,7 +143,7 @@ injection_experiment/search_runtime/models/object_best_model_centernet_conv_tiny
 
 | 现象 | 检查项 |
 |---|---|
-| 找不到训练样本 | 确认数据目录中存在含 `images` 与 `annotations` 的 H5。 |
+| 找不到训练样本 | 确认数据目录中存在含 `images`、`annotations` 与 `original_slice` 的 H5。 |
 | checkpoint 形状不匹配 | 检查 `resnet18`、`convnext_tiny`、`convnext_small` 是否一致。 |
 | validation 候选过多 | 同时检查 `--conf`、`--topk` 和训练数据中的空背景比例。 |
 | 显存不足 | 减小 batch size；`train.sh` 也支持用 `BATCH_SIZE` 覆盖。 |

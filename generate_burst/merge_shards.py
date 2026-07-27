@@ -113,7 +113,7 @@ def main() -> None:
         out.create_dataset("original_filename", shape=(total_images,), dtype=str_dtype)
         out.create_dataset("original_path", shape=(total_images,), dtype=str_dtype)
         out.create_dataset("original_slice", shape=(total_images,), dtype="int32")
-        out.attrs["generator"] = "merge_time_dm_h5.py"
+        out.attrs["generator"] = "merge_shards.py"
         out.attrs["source_shards"] = len(inputs)
 
         for shard_index, (path, image_count, ann_count) in enumerate(totals):

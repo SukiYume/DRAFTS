@@ -78,7 +78,7 @@ def decode_centernet_outputs(outputs, conf_thr=0.1, topk=100, down_ratio=4):
 # ---------------------------------------------------------------------------
 
 def _greedy_match(dist_matrix, dist_thr):
-    """按预测顺序贪心匹配 GT；挑距离最小的 GT，需 ≤ dist_thr 且未被占用 → TP。
+    """按预测顺序匹配最近的未占用 GT；距离需 ≤ ``dist_thr``。
 
     Args:
         dist_matrix: numpy ``[n_pred, n_gt]``，预测 i 到 GT j 的欧氏距离。
@@ -94,14 +94,17 @@ def _greedy_match(dist_matrix, dist_thr):
     if n_pred == 0 or n_gt == 0:
         return tp, matched_dist
 
-    taken = set()
+    available = np.ones(n_gt, dtype=bool)
     for pi in range(n_pred):
-        gi = int(np.argmin(dist_matrix[pi]))
+        available_gt = np.flatnonzero(available)
+        if available_gt.size == 0:
+            break
+        gi = int(available_gt[np.argmin(dist_matrix[pi, available_gt])])
         best = float(dist_matrix[pi, gi])
-        if best <= dist_thr and gi not in taken:
+        if best <= dist_thr:
             tp[pi] = 1.0
             matched_dist[pi] = best
-            taken.add(gi)
+            available[gi] = False
     return tp, matched_dist
 
 

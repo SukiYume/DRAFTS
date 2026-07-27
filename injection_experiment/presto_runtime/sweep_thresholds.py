@@ -1,6 +1,6 @@
 """从压缩后的 PRESTO 结果包重算不同 sigma 阈值下的指标和图。
 
-该脚本不重新跑 PRESTO，只读取 `export_presto_threshold_package.py` 生成的
+该脚本不重新跑 PRESTO，只读取 `export_threshold_data.py` 生成的
 truth/event/histogram 文件，在本地快速筛选 sigma=3/5/7 等阈值并重画
 recall、precision-proxy 热图。
 """
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from presto_common import (
+from search_utils import (
     QUANTIZATIONS,
     SNR_BINS,
     bin_index,

@@ -29,6 +29,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -37,7 +38,12 @@ from typing import Iterable
 
 import numpy as np
 
-from presto_common import (
+EXPERIMENT_DIR = Path(__file__).resolve().parent.parent
+if str(EXPERIMENT_DIR) not in sys.path:
+    sys.path.insert(0, str(EXPERIMENT_DIR))
+
+from matching import maximum_cardinality_min_cost_matching
+from search_utils import (
     QUANTIZATIONS,
     SNR_BINS,
     bin_index,
@@ -579,15 +585,17 @@ def load_statuses(output_root: Path) -> list[dict]:
 
 
 def event_from_candidate(row: dict, event_id: str) -> dict:
+    dm = float(row["dm_pc_cm3"])
+    time_ms = float(row["time_ms"])
     return {
         "event_id": event_id,
         "quantization": str(row["quantization"]),
         "batch": int(row["batch"]),
         "file_stem": str(row["file_stem"]),
-        "dm_pc_cm3": float(row["dm_pc_cm3"]),
+        "dm_pc_cm3": dm,
         "sigma": float(row["sigma"]),
         "time_s": float(row["time_s"]),
-        "time_ms": float(row["time_ms"]),
+        "time_ms": time_ms,
         "sample": int(row["sample"]),
         "downfact": int(row["downfact"]),
         "dt_seconds": float(row.get("dt_seconds", 4.9152e-05)),
@@ -595,12 +603,22 @@ def event_from_candidate(row: dict, event_id: str) -> dict:
         "center_start_sample": int(row.get("center_start_sample", 0)),
         "context_fits_count": int(row.get("context_fits_count", 1)),
         "event_size": 1,
+        "dm_min_pc_cm3": dm,
+        "dm_max_pc_cm3": dm,
+        "time_min_ms": time_ms,
+        "time_max_ms": time_ms,
         "source_file": row.get("source_file", ""),
     }
 
 
 def update_event_if_stronger(event: dict, row: dict) -> None:
     event["event_size"] += 1
+    dm = float(row["dm_pc_cm3"])
+    time_ms = float(row["time_ms"])
+    event["dm_min_pc_cm3"] = min(float(event["dm_min_pc_cm3"]), dm)
+    event["dm_max_pc_cm3"] = max(float(event["dm_max_pc_cm3"]), dm)
+    event["time_min_ms"] = min(float(event["time_min_ms"]), time_ms)
+    event["time_max_ms"] = max(float(event["time_max_ms"]), time_ms)
     if float(row["sigma"]) <= float(event["sigma"]):
         return
     event.update(
@@ -637,7 +655,13 @@ def add_candidate_to_event_index(
     for ii in range(dm_bucket - 1, dm_bucket + 2):
         for jj in range(time_bucket - 1, time_bucket + 2):
             for event in buckets.get((ii, jj), []):
-                if abs(dm - float(event["dm_pc_cm3"])) <= dm_tol and abs(time_ms - float(event["time_ms"])) <= time_tol:
+                dm_span = max(dm, float(event["dm_max_pc_cm3"])) - min(
+                    dm, float(event["dm_min_pc_cm3"])
+                )
+                time_span = max(time_ms, float(event["time_max_ms"])) - min(
+                    time_ms, float(event["time_min_ms"])
+                )
+                if dm_span <= dm_tol and time_span <= time_tol:
                     update_event_if_stronger(event, row)
                     return next_event_id
 
@@ -680,26 +704,59 @@ def analyze(
     for event in events:
         events_by_key.setdefault(candidate_key(event), []).append(event)
 
-    used_events: set[str] = set()
+    ordered_truth = sorted(
+        truth,
+        key=lambda item: (
+            str(item["quantization"]),
+            int(item["batch"]),
+            str(item["output_file_stem"]),
+            str(item["injection_id"]),
+        ),
+    )
+    truth_indices_by_key: dict[tuple[str, int, str], list[int]] = {}
+    for truth_index, row in enumerate(ordered_truth):
+        truth_indices_by_key.setdefault(truth_key(row), []).append(truth_index)
+
+    assignments: dict[int, dict] = {}
+    for key, truth_indices in truth_indices_by_key.items():
+        local_events = sorted(
+            events_by_key.get(key, []), key=lambda event: str(event["event_id"])
+        )
+        edges: list[tuple[int, int, float]] = []
+        for local_truth_index, truth_index in enumerate(truth_indices):
+            row = ordered_truth[truth_index]
+            for event_index, event in enumerate(local_events):
+                if not event_matches_truth(
+                    event,
+                    row,
+                    args.source_dm_tolerance,
+                    args.source_time_tolerance_ms,
+                ):
+                    continue
+                dt_ms = event_dt_ms(event, row)
+                ddm = event_ddm(event, row)
+                score = (
+                    abs(dt_ms) / max(args.source_time_tolerance_ms, 1e-6)
+                    + abs(ddm) / max(args.source_dm_tolerance, 1e-6)
+                    - 0.001 * float(event["sigma"])
+                )
+                edges.append((local_truth_index, event_index, score))
+
+        local_assignments = maximum_cardinality_min_cost_matching(
+            len(truth_indices), len(local_events), edges
+        )
+        for local_truth_index, event_index in local_assignments.items():
+            assignments[truth_indices[local_truth_index]] = local_events[event_index]
+
+    used_events = {
+        str(event["event_id"])
+        for event in assignments.values()
+    }
     matches: list[dict] = []
-    for row in sorted(truth, key=lambda item: (str(item["quantization"]), int(item["batch"]), str(item["output_file_stem"]), str(item["injection_id"]))):
-        key = truth_key(row)
-        best_event = None
-        best_score = float("inf")
-        for event in events_by_key.get(key, []):
-            if event["event_id"] in used_events:
-                continue
-            if not event_matches_truth(event, row, args.source_dm_tolerance, args.source_time_tolerance_ms):
-                continue
-            dt_ms = event_dt_ms(event, row)
-            ddm = event_ddm(event, row)
-            score = abs(dt_ms) / max(args.source_time_tolerance_ms, 1e-6) + abs(ddm) / max(args.source_dm_tolerance, 1e-6) - 0.001 * float(event["sigma"])
-            if score < best_score:
-                best_score = score
-                best_event = event
+    for truth_index, row in enumerate(ordered_truth):
+        best_event = assignments.get(truth_index)
         detected = best_event is not None
         if detected:
-            used_events.add(best_event["event_id"])
             dm_error = float(best_event["dm_pc_cm3"]) - float(row["dm_pc_cm3"])
             toa_error_ms = (float(best_event["sample"]) - float(row["highest_freq_toa_file_raw_sample"])) * float(row.get("time_reso_seconds", best_event.get("dt_seconds", 4.9152e-05))) * 1000.0
             localized = abs(dm_error) <= args.localize_dm_tolerance and abs(toa_error_ms) <= args.localize_time_tolerance_ms

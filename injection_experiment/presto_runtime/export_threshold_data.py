@@ -15,7 +15,7 @@ import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from presto_common import (
+from search_utils import (
     SNR_BINS,
     bin_index,
     candidate_key,

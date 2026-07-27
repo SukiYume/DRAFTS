@@ -6,18 +6,21 @@
 
 | 路径 | 用途 |
 | --- | --- |
-| `generate_multifit_time_dm_h5.py` | 主生成器。读取背景 FITS，注入模拟 FRB，做消色散和裁切，写 H5、配置、metadata 和逐图 bounding-box 标注。 |
-| `launch_shards_50000.sh` | 当前批量入口。默认生成 50,000 个 unique signals，每个信号 4 个 crop，合并成约 200,000 张训练图。 |
-| `merge_time_dm_h5.py` | 合并 shard H5，并同步生成合并后的 annotation/config/metadata/inspect 文件。 |
-| `inspect_time_dm_h5.py` | 快速检查 H5 内容，输出 JSON 摘要和 contact sheet。 |
-| `frb_sim.py` | FRB 动态谱基本函数和 FAST 背景处理 helper。物理参数采样在 `generate_multifit_time_dm_h5.py` 中完成。 |
-| `d-center-binary-core.py` | 生成器复用的 GPU 消色散核心。 |
+| `generate_dataset.py` | 主生成器。读取背景 FITS，注入模拟 FRB，做消色散和裁切，写 H5、配置、metadata 和逐图 bounding-box 标注。 |
+| `run_generation.sh` | 批量入口。默认生成 50,000 个 unique signals，每个信号 4 个 crop，合并成约 200,000 张训练图。 |
+| `merge_shards.py` | 合并 shard H5，并同步生成合并后的 annotation/config/metadata/inspect 文件。 |
+| `inspect_dataset.py` | 快速检查 H5 内容，输出 JSON 摘要和 contact sheet。 |
+| `simulation_utils.py` | FRB 动态谱基本函数和 FAST 背景处理工具。物理参数采样在 `generate_dataset.py` 中完成。 |
+| `d-center-binary-core.py` | 生成器复用的 GPU 消色散核心；文件名有意与 `runcode` 保持一致。 |
 | `rawdata/` | 背景 FITS 位置。大数据不随仓库保存，运行时用目录、软链接或 `RAW_DIR` 指定。 |
 | `shards_50000/` | 批量生成产物目录。属于可重算产物，不作为源码维护。 |
 
+Git 只跟踪上述代码和 README；背景 FITS、shard、H5、缓存、日志和检查图均由
+`.gitignore` 排除，不属于可提交的生成器源码。
+
 ## 当前生成配置
 
-`launch_shards_50000.sh` 是当前推荐入口。它按 40 个 shard 生成数据，默认每轮并发 4 个 shard，并把任务分配到 GPU 0-7。
+`run_generation.sh` 是当前推荐入口。它按 40 个 shard 生成数据，默认每轮并发 4 个 shard，并把任务分配到 GPU 0-7。
 
 关键默认值：
 
@@ -83,10 +86,10 @@ cd DRAFTS/generate_burst
 RAW_DIR=/path/to/rawdata \
 PY=/path/to/miniconda3/bin/python \
 SHARDS_PER_WAVE=4 \
-./launch_shards_50000.sh
+./run_generation.sh
 ```
 
-脚本会先写每个 shard，再调用 `merge_time_dm_h5.py` 合并，最后调用 `inspect_time_dm_h5.py` 做抽样检查。
+脚本会先写每个 shard，再调用 `merge_shards.py` 合并，最后调用 `inspect_dataset.py` 做抽样检查。
 
 主要输出：
 
@@ -112,7 +115,7 @@ SHARDS_PER_WAVE=4 \
 
 ```bash
 cd DRAFTS/generate_burst
-python generate_multifit_time_dm_h5.py \
+python generate_dataset.py \
   --rawdata-dir ./rawdata \
   --output ./test_multifit.h5 \
   --unique-signals 100 \
@@ -123,7 +126,7 @@ python generate_multifit_time_dm_h5.py \
 实际写一个小 H5：
 
 ```bash
-python generate_multifit_time_dm_h5.py \
+python generate_dataset.py \
   --rawdata-dir ./rawdata \
   --output ./test_multifit.h5 \
   --unique-signals 100 \
@@ -135,7 +138,7 @@ python generate_multifit_time_dm_h5.py \
 检查输出：
 
 ```bash
-python inspect_time_dm_h5.py \
+python inspect_dataset.py \
   ./test_multifit.h5 \
   --json ./test_multifit.inspect.json \
   --contact-sheet ./test_multifit_contact.png

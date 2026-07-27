@@ -5,31 +5,41 @@
 ## 流程
 
 ```text
-inject_fits.py
+generate_injections.py
   -> simdata/<run_label>_bXX_{raw8,packed2} + truth_archive/<run_label>_bXX_{raw8,packed2}
-  -> run_injection_campaign.py / launch_search.py 调用 search_runtime
-  -> analyze_search_results.py 匹配 truth 和 candidates
-  -> aggregate_campaign_results.py 汇总 batch 指标
+  -> run_campaign.py / launch_search.py 调用 search_runtime
+  -> evaluate_results.py 匹配 truth 和 candidates
+  -> aggregate_results.py 汇总 batch 指标
 ```
 
-`run_injection_campaign.py` 是主入口。它支持完整流程、只生成注入数据、只复用已有注入数据重新搜索三种模式。
+`run_campaign.py` 是主入口。它支持完整流程、只生成注入数据、只复用已有注入数据重新搜索三种模式。
 
 ## 文件职责
 
 | 路径 | 用途 |
 | --- | --- |
-| `run_injection_campaign.py` | 注入评估主控脚本，负责分 batch 生成、搜索、分析和汇总。 |
-| `inject_fits.py` | 只生成注入后的 raw8/packed2 FITS 和 `truth_manifest.jsonl`。 |
-| `frb_model.py` | 注入用动态谱基本函数：高斯频率包络、散射高斯时间 profile 和色散延迟常数。参数采样在 `inject_fits.py` 中完成。 |
-| `launch_search.py` | 单 batch 搜索封装，调用 `search_runtime/`。 |
-| `analyze_search_results.py` | 读取 truth 与候选表，做 source/event 匹配和误报统计。 |
-| `aggregate_campaign_results.py` | 汇总多个 batch 的分析结果。 |
-| `run_v10_search_1024ds2.sh` | v10 + `det_prob=0.3` 参考搜索入口，默认复用 20 批注入数据，并使用 `class_block_size=1024` 与 2 倍 time downsample。 |
-| `search_runtime/` | 搜索运行时副本。运行前需要把检测器和 binary 分类器权重放入 `search_runtime/models/`。 |
+| `run_campaign.py` | 注入评估主控脚本，负责分 batch 生成、搜索、分析和汇总。 |
+| `generate_injections.py` | 生成注入后的 raw8/packed2 FITS 和 `truth_manifest.jsonl`。 |
+| `injection_model.py` | 注入用动态谱基本函数：高斯频率包络、散射高斯时间 profile 和色散延迟常数。参数采样在 `generate_injections.py` 中完成。 |
+| `launch_search.py` | 单 batch 的 DRAFTS 多 section 搜索封装，调用 `search_runtime/`。 |
+| `evaluate_results.py` | 读取 truth 与候选表，做 source/event 匹配和误报统计。 |
+| `aggregate_results.py` | 汇总多个 batch 的分析结果。 |
+| `matching.py` | DRAFTS 与 PRESTO 共用的最大基数、最小代价一对一匹配。 |
+| `search_runtime/` | 注入实验专用搜索运行时。运行前需要把检测器和 binary 分类器权重放入 `search_runtime/models/`。 |
 | `presto_runtime/` | PRESTO blind-search 基线、快速汇总和阈值重画脚本。 |
 | `simdata/` | 运行时生成的大体积 raw8/packed2 注入 FITS，供 DL 和 PRESTO 共用。 |
 | `truth_archive/` | 每个 batch/量化版本的 `truth_manifest.jsonl` 和 `run_config.json`，供 DL 和 PRESTO 共用。 |
 | `runs/` | DL 搜索、分析、汇总和日志目录；大体积注入 FITS 与其分开保存。 |
+
+Git 只跟踪源码、README 和权重清单。`simdata/`、`truth_archive/`、`runs/`、结果目录，
+以及本地论文/笔记目录均由 `.gitignore` 排除，不属于可提交的实验代码。
+
+`search_runtime/` 与 `runcode/` 共享搜索模型实现，但不是整目录逐字镜像：
+`binary_model.py`、`centernet_model.py` 和 `centernet_eval.py` 应保持逐文件一致；
+`d-center-binary-core.py`、`d-center-binary-gate.py` 与 `t-blind-section.py` 则保留
+注入评估需要的候选/proposal manifest、重叠 DM window、classifier time
+downsample 和物理 TOA-DM 去重接口。同步生产搜索改动时应逐项移植并重新执行
+campaign dry-run，不能直接用 `runcode/` 覆盖整个目录。
 
 ## 注入信号模型
 
@@ -50,7 +60,7 @@ inject_fits.py
 
 ## 参数范围和分布
 
-`inject_fits.py` 对 5 个核心维度使用 Latin-hypercube stratified unit cube，再映射到物理参数；这样每个 campaign 内参数覆盖更均匀，适合做 completeness 和分箱图。
+`generate_injections.py` 对 5 个核心维度使用 Latin-hypercube stratified unit cube，再映射到物理参数；这样每个 campaign 内参数覆盖更均匀，适合做 completeness 和分箱图。
 
 | 参数 | 范围 | 分布 |
 | --- | --- | --- |
@@ -61,6 +71,11 @@ inject_fits.py
 | `scattering_ms_at_1ghz` | `0` 或 `[0.03, 10] ms` | 15% 精确为 `0`；其余 Latin-hypercube 分层对数均匀分布。 |
 | `center_freq_mhz` | 观测频带 `[freq_min, freq_max]` | 在生成 truth 行时均匀分布。 |
 | `highest_freq_toa_global_raw_sample` | `inject_file_first..inject_file_last` 覆盖的样本窗口 | 合法窗口内均匀抽样；每个注入保留至少 `0.24 s` 间隔，并使用 `0.18 s` 或模型支持宽度作为边界 guard。 |
+
+TOA 放置最多尝试 1024 次。若给定窗口、注入数量、边界 guard 和最小间距无法同时满足，
+`generate_injections.py` 会抛出 `ValueError` 并终止该批生成；不会返回违反间距约束的“尽力而为”
+样本。此时应扩大注入文件范围、减少底层 `--count`（campaign 入口为
+`--count-per-batch`），或显式调整间距参数。
 
 每个 raw8/packed2 输出目录都会写 `run_config.json` 和 `truth_manifest.jsonl`。`run_config.json` 记录参数范围和分布，`truth_manifest.jsonl` 记录每个注入源的实际 DM、S/N、宽度、带宽、中心频率、散射、TOA 和 per-channel 幅度。
 
@@ -79,6 +94,8 @@ inject_fits.py
 
 两份默认权重可从
 [DRAFTS model repository](https://huggingface.co/TorchLight/DRAFTS) 下载：
+文件名和 SHA-256 同时记录在
+[`search_runtime/models/PUT_WEIGHTS_HERE.txt`](search_runtime/models/PUT_WEIGHTS_HERE.txt)。
 
 ```bash
 mkdir -p search_runtime/models
@@ -96,7 +113,7 @@ curl -L \
 
 ```bash
 cd DRAFTS/injection_experiment
-python run_injection_campaign.py \
+python run_campaign.py \
   --background-dir /path/to/rawdata \
   --work-root /path/to/injection_experiment/runs \
   --sim-root /path/to/injection_experiment/simdata \
@@ -113,7 +130,7 @@ python run_injection_campaign.py \
 如果只需要单独检查注入 FITS 生成，可直接用底层脚本：
 
 ```bash
-python inject_fits.py \
+python generate_injections.py \
   --background-dir /path/to/rawdata \
   --output-root ./simdata \
   --run-label demo001 \
@@ -131,7 +148,7 @@ python inject_fits.py \
 ```bash
 cd DRAFTS/injection_experiment
 conda activate pytorch
-python run_injection_campaign.py \
+python run_campaign.py \
   --work-root /path/to/injection_runs/runs \
   --sim-root /path/to/injection_runs/simdata \
   --truth-root /path/to/injection_runs/truth_archive \
@@ -157,20 +174,25 @@ python run_injection_campaign.py \
 
 ## 分析和汇总
 
-`run_injection_campaign.py` 正常完成后会自动分析和汇总。需要手动复查时，可分别运行：
+`run_campaign.py` 正常完成后会自动分析和汇总。需要手动复查时，可分别运行：
 
 ```bash
-python analyze_search_results.py \
+python evaluate_results.py \
   --truth /path/to/injection_experiment/truth_archive/<run_label>_bXX_raw8/truth_manifest.jsonl \
   --candidates /path/to/candidates.csv \
   --output-dir /path/to/analysis \
   --source-dm-tolerance 60 \
   --source-time-tolerance-ms 30
 
-python aggregate_campaign_results.py \
+python aggregate_results.py \
   --analysis-root /path/to/runs/<run_label>/analysis \
   --output-dir /path/to/runs/<run_label>/aggregate
 ```
+
+DL 与 PRESTO 的候选先按时间/DM 容差形成事件，但事件内任意两成员都必须满足整体直径
+限制，避免单链式 `A≈B≈C` 把相距过远的 A/C 桥接成一个事件。truth-event 分配随后在
+所有合法边上做“最大匹配数优先、总归一化距离最小”的一对一全局匹配，不使用依赖输入
+顺序的逐 truth 贪心。这样不会因为某个 truth 抢先占用共享近邻而丢掉本来可达到的召回。
 
 ## 运行注意事项
 

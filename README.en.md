@@ -117,6 +117,17 @@ Install PyTorch, torchvision, and CuPy with builds compatible with the target
 CUDA driver. Production-search notes are available in
 [`runcode/requirements.txt`](runcode/requirements.txt).
 
+The following production-search stack was exercised on `pg13` on 2026-07-27.
+It is a reproducible baseline, not a minimum-version declaration:
+
+| Python | PyTorch / CUDA build | torchvision | CuPy / CUDA runtime | GPU / driver | Validation |
+|---|---|---|---|---|---|
+| 3.11.15 | 2.5.1+cu121 / 12.1 | 0.20.1+cu121 | 14.0.1 / 12.9 | NVIDIA L40 / 535.129.03 | PyTorch and CuPy saw all 8 GPUs; CUDA tensor/array operations passed |
+
+The same environment contains NumPy 2.4.4, SciPy 1.16.3, Astropy 7.2.0,
+h5py 3.16.0, and Ultralytics 8.4.50. Archive the actual package, GPU, and
+driver versions beside every production search.
+
 ### Data and pretrained models
 
 - [DRAFTS training data](https://huggingface.co/datasets/TorchLight/DRAFTS)
@@ -151,8 +162,8 @@ in [`injection_experiment/README.md`](injection_experiment/README.md).
 ```bash
 cd generate_burst
 RAW_DIR=/path/to/background_fits \
-OUTPUT_ROOT=/path/to/generated_training_data \
-./launch_shards_50000.sh
+GEN_ROOT=/path/to/generated_training_data \
+./run_generation.sh
 ```
 
 The default campaign generates 50,000 unique injected events, four crops per
@@ -226,18 +237,18 @@ baseline.
 
 | Component | Purpose |
 |---|---|
-| `inject_fits.py` | Inject simulated FRBs into real backgrounds and write raw8 and optionally packed2 data. |
-| `run_injection_campaign.py` | Orchestrate generation, search, analysis, and aggregation. |
+| `generate_injections.py` | Inject simulated FRBs into real backgrounds and write raw8 and optionally packed2 data. |
+| `run_campaign.py` | Orchestrate generation, search, analysis, and aggregation. |
 | `launch_search.py` | Launch the injection-specific DRAFTS search runtime. |
-| `analyze_search_results.py` | Match candidates to truth and calculate recall, false positives, and binned metrics. |
-| `aggregate_campaign_results.py` | Aggregate analysis products across batches. |
+| `evaluate_results.py` | Match candidates to truth and calculate recall, false positives, and binned metrics. |
+| `aggregate_results.py` | Aggregate analysis products across batches. |
 | `search_runtime/` | Minimal search runtime and model-weight placeholders. |
 | `presto_runtime/` | PRESTO blind-search baseline and threshold sweeps. |
 
 Generic search-only example:
 
 ```bash
-python injection_experiment/run_injection_campaign.py \
+python injection_experiment/run_campaign.py \
   --work-root /path/to/injection_runs \
   --run-label example_campaign \
   --batches 20 \

@@ -51,7 +51,12 @@ from typing import Iterable
 import numpy as np
 from astropy.io import fits
 
-from frb_model import DM_DELAY_SECONDS, TAU_FREQ_INDEX, gaussian_profile, scattered_gaussian_profile
+from injection_model import (
+    DM_DELAY_SECONDS,
+    TAU_FREQ_INDEX,
+    gaussian_profile,
+    scattered_gaussian_profile,
+)
 
 
 DEFAULT_BACKGROUND_DIR = Path("/path/to/generation_data/rawdata")
@@ -288,9 +293,12 @@ def choose_toas(
                 out.append(toa)
                 break
         else:
-            toa = int(rng.integers(earliest, latest))
-            previous.append(toa)
-            out.append(toa)
+            raise ValueError(
+                "Cannot place all injections while preserving the minimum TOA "
+                f"separation: placed={len(previous)} window=[{earliest}, {latest}) "
+                f"min_separation_samples={min_sep}. Reduce --count, widen the "
+                "injection file window, or lower MIN_TOA_SEPARATION_S."
+            )
     return out
 
 

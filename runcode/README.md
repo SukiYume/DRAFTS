@@ -49,6 +49,15 @@ CuPy 不在通用依赖清单中：请单独安装与目标节点 CUDA toolkit �
 才需要额外安装 `numba`。PyTorch 与 torchvision 同样应选择和目标 CUDA 环境匹配的
 wheel。
 
+2026-07-27 在 `pg13` 完成了以下生产环境实测：
+
+| Python | PyTorch / CUDA build | torchvision | CuPy / runtime | GPU / 驱动 | GPU smoke test |
+|---|---|---|---|---|---|
+| 3.11.15 | 2.5.1+cu121 / 12.1 | 0.20.1+cu121 | 14.0.1 / 12.9 | NVIDIA L40 / 535.129.03 | PyTorch、CuPy 均识别 8 卡，基本 CUDA 运算通过 |
+
+这是已验证基线，不是最低版本约束；同一环境的 NumPy/SciPy/Astropy/h5py 分别为
+2.4.4/1.16.3/7.2.0/3.16.0。
+
 检查环境：
 
 ```bash
@@ -119,6 +128,31 @@ source/date2/*.fits
 如果 `data_path` 直接包含 FITS，脚本按文件名中的 `-Mxx_` 聚合 beam。如果 `data_path` 指向 source 根目录，脚本递归扫描日期子目录。`beam_filter='M01'` 或 `--beam M01` 只跑 M01，`all` 跑全部 beam。
 
 脚本会跳过文件名中包含 `_N_`、`_W_`、`_F_` 的 FITS。
+
+### 望远镜、频段与固定通道选择
+
+当前 runtime 面向 FAST L 波段 PSRFITS。频率轴本身由 `OBSFREQ`、`OBSBW` 和
+`NCHAN` 读取，检测输入固定下采样为 512 个通道；但消色散检测还沿用了针对
+4096-channel FAST 数据设定的固定有效通道段 `[10, 650)` 与 `[820, 4050)`，并按
+`NCHAN/4096` 缩放索引。对标称 1000–1500 MHz/4096-channel 数据，这约对应
+1001.2–1079.3 MHz 与 1100.1–1494.3 MHz。二分类 cutout 仍使用 full-frequency
+数据。
+
+因此，其他望远镜、其他接收机频段、倒置频率轴，或物理坏频段不同的数据都不能只改
+FITS 路径后直接视为已验证。应先按目标观测修改
+`d-center-binary-core.py::_build_dedispersion_cache()` 的 `index_array`，再用已知
+脉冲和注入实验验证召回、DM/TOA 误差；`NCHAN` 还必须能整除到 512 通道。
+
+### 损坏 FITS 的连续搜索策略
+
+`d-center-binary-gate.py` 的盲搜策略是按文件容错：某个 FITS 读取失败时，把异常写到
+与 completed log 同名前缀的 `*_bad_fits.log`，只用相同 shape 的随机噪声替换该文件，
+然后继续读取和搜索后续 FITS，不会因替换动作提前结束任务。只有
+`process_fits_list()` 遍历完成后，gate 才把整个 section 写入 completed log。
+
+随机替换会使涉及该文件的窗口没有真实观测内容，但可以避免一次坏文件阻断后续文件。
+正式结果必须同时归档并检查 `*_bad_fits.log`；修复原 FITS 后若需要补回这段观测，应
+清理该 section 的完成记录及对应输出后重跑。
 
 ## 未知 DM 盲搜
 

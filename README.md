@@ -123,6 +123,15 @@ python -m pip install -r requirements.txt
 PyTorch、torchvision 与 CuPy 应根据目标机器的 CUDA 驱动安装。生产搜索环境的补充依赖
 和版本提示见 [`runcode/requirements.txt`](runcode/requirements.txt)。
 
+2026-07-27 在 `pg13` 实际验证的生产搜索环境如下；它是可复现基线，不是最低版本声明：
+
+| Python | PyTorch / CUDA build | torchvision | CuPy / CUDA runtime | GPU / 驱动 | 验证结果 |
+|---|---|---|---|---|---|
+| 3.11.15 | 2.5.1+cu121 / 12.1 | 0.20.1+cu121 | 14.0.1 / 12.9 | NVIDIA L40 / 535.129.03 | PyTorch 与 CuPy 均识别 8 卡，CUDA tensor/array 运算通过 |
+
+同一环境还包含 NumPy 2.4.4、SciPy 1.16.3、Astropy 7.2.0、h5py 3.16.0 和
+Ultralytics 8.4.50。每次正式搜索仍应把实际版本、GPU 和驱动随结果归档。
+
 ### 3. 准备公开数据与模型
 
 - [DRAFTS training data](https://huggingface.co/datasets/TorchLight/DRAFTS)
@@ -159,8 +168,8 @@ curl -L \
 ```bash
 cd generate_burst
 RAW_DIR=/path/to/background_fits \
-OUTPUT_ROOT=/path/to/generated_training_data \
-./launch_shards_50000.sh
+GEN_ROOT=/path/to/generated_training_data \
+./run_generation.sh
 ```
 
 默认批次生成 50,000 个唯一注入事件，每个事件构造 4 个 crop，并通过分片控制并发
@@ -231,18 +240,18 @@ python runcode/t-blind-section.py \
 
 | 文件 | 作用 |
 |---|---|
-| `inject_fits.py` | 向真实背景注入模拟 FRB，生成 raw8，并可同步生成 packed2。 |
-| `run_injection_campaign.py` | 调度生成、搜索、分析和聚合，支持 generate-only 与 search-only。 |
+| `generate_injections.py` | 向真实背景注入模拟 FRB，生成 raw8，并可同步生成 packed2。 |
+| `run_campaign.py` | 调度生成、搜索、分析和聚合，支持 generate-only 与 search-only。 |
 | `launch_search.py` | 启动注入实验专用 DRAFTS 搜索 runtime。 |
-| `analyze_search_results.py` | 匹配 truth 与候选，计算召回、误报和参数分箱结果。 |
-| `aggregate_campaign_results.py` | 汇总多个 batch 的分析结果。 |
+| `evaluate_results.py` | 匹配 truth 与候选，计算召回、误报和参数分箱结果。 |
+| `aggregate_results.py` | 汇总多个 batch 的分析结果。 |
 | `search_runtime/` | 注入实验使用的精简搜索代码与权重占位说明。 |
 | `presto_runtime/` | PRESTO blind-search 基线与阈值扫描代码。 |
 
 通用 search-only 示例：
 
 ```bash
-python injection_experiment/run_injection_campaign.py \
+python injection_experiment/run_campaign.py \
   --work-root /path/to/injection_runs \
   --run-label example_campaign \
   --batches 20 \

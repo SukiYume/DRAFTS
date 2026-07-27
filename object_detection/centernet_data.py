@@ -119,10 +119,44 @@ def _oversample_train_df(train_df, seed):
     return expanded
 
 
-def get_train_val(data_folder, train_ratio=0.8, seed=42):
-    """扫描 ``data_folder`` 下所有 ``.h5``，按帧建表并切分 train / val。
+def _split_grouped_frames(df, train_ratio, seed):
+    """按物理 scene 分组切分，确保同组的所有 crop 只落入一个数据集。"""
+    if not 0.0 < train_ratio < 1.0:
+        raise ValueError(f"train_ratio must be between 0 and 1, got {train_ratio}")
 
-    切分先于过采样完成，保证 train/val 没有泄漏。每行对应一帧；``min_box_size`` 用于过采样判定。
+    groups = df["split_group"].drop_duplicates().tolist()
+    if len(groups) < 2:
+        raise ValueError(
+            "CenterNet train/val split needs at least two physical scene groups; "
+            "check each H5 original_slice metadata"
+        )
+
+    group_sizes = df.groupby("split_group", sort=False).size().to_dict()
+    rng = np.random.default_rng(seed)
+    groups = [groups[index] for index in rng.permutation(len(groups))]
+    cumulative_sizes = np.cumsum([group_sizes[group] for group in groups])
+    target_train_frames = len(df) * train_ratio
+    split_idx = min(
+        range(1, len(groups)),
+        key=lambda index: abs(cumulative_sizes[index - 1] - target_train_frames),
+    )
+    train_groups = set(groups[:split_idx])
+
+    train_df = df[df["split_group"].isin(train_groups)].copy()
+    val_df = df[~df["split_group"].isin(train_groups)].copy()
+    if train_df.empty or val_df.empty:
+        raise RuntimeError("Grouped CenterNet split unexpectedly produced an empty partition")
+
+    train_df = train_df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+    val_df = val_df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+    return train_df, val_df
+
+
+def get_train_val(data_folder, train_ratio=0.8, seed=42):
+    """扫描 ``data_folder`` 下所有 ``.h5``，按物理 scene 切分 train / val。
+
+    同一 ``(h5_path, original_slice)`` 下的所有 crop 始终进入同一分区；切分完成后
+    才对训练帧过采样。每行对应一帧；``min_box_size`` 用于过采样判定。
     """
     h5_files = sorted(
         os.path.join(data_folder, f) for f in os.listdir(data_folder) if f.endswith(".h5")
@@ -135,6 +169,17 @@ def get_train_val(data_folder, train_ratio=0.8, seed=42):
         with h5py.File(h5_path, "r") as f:
             total_images = int(f["images"].shape[0])
             all_ann = f["annotations"][:]
+            if "original_slice" not in f:
+                raise KeyError(
+                    f"{h5_path} has no original_slice dataset; grouped train/val "
+                    "splitting cannot be made leakage-safe"
+                )
+            original_slices = np.asarray(f["original_slice"][:]).reshape(-1)
+            if len(original_slices) != total_images:
+                raise ValueError(
+                    f"{h5_path} original_slice length {len(original_slices)} "
+                    f"does not match images length {total_images}"
+                )
         for img_idx in range(total_images):
             img_ann = all_ann[all_ann[:, 0] == img_idx, 1:]      # 列 = [left, top, w, h]
             # 只按数值有限和 w/h 过滤占位行。不能用 left/top>=0：越界框允许从图外开始。
@@ -149,15 +194,20 @@ def get_train_val(data_folder, train_ratio=0.8, seed=42):
                 "box_count": int(len(bboxes)),
                 "has_annotation": len(bboxes) > 0,
                 "min_box_size": min_box_size,
+                "original_slice": int(original_slices[img_idx]),
+                "split_group": (h5_path, int(original_slices[img_idx])),
             })
 
-    df = pd.DataFrame(records).sample(frac=1.0, random_state=seed).reset_index(drop=True)
-    split_idx = int(len(df) * train_ratio)
-    val_df = df[split_idx:].reset_index(drop=True)
-    train_df = _oversample_train_df(df[:split_idx].reset_index(drop=True), seed)
+    df = pd.DataFrame(records)
+    train_base, val_df = _split_grouped_frames(df, train_ratio, seed)
+    train_df = _oversample_train_df(train_base, seed)
 
     train_pos = int(train_df["has_annotation"].sum())
     val_pos = int(val_df["has_annotation"].sum())
+    print(
+        f"[Data] Scene groups: train={train_base['split_group'].nunique()} "
+        f"| val={val_df['split_group'].nunique()}"
+    )
     print(f"[Data] Train: {len(train_df)} ({train_pos} pos / {len(train_df) - train_pos} neg)"
           f" | Val: {len(val_df)} ({val_pos} pos / {len(val_df) - val_pos} neg)")
     return train_df, val_df
