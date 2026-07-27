@@ -1,12 +1,11 @@
-DRAFTS injection search requires these two files in this directory:
+DRAFTS injection search requires these two files in this directory.
+Set DRAFTS_MODEL_BASE_URL to a model registry that exposes both filenames.
 
 1. object_best_model_centernet_conv_tiny_ema_v10.pth
-   https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
    SHA-256: bcad4e710f5f1ccd3c8609d35a8d3fbfc36abd1d85bfefd035e945a573fb0629
 
 2. binary_best_model_conv_small_ema.pth
-   https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
    SHA-256: 2055745aab76ddc16074516aa7b9aafdfaedf16df37ce8924389573eab27ffd8
 
-Download both files from:
-https://huggingface.co/TorchLight/DRAFTS
+Example URL shape:
+${DRAFTS_MODEL_BASE_URL%/}/<filename>

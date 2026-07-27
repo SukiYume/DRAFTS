@@ -92,19 +92,19 @@ TOA 放置最多尝试 1024 次。若给定窗口、注入数量、边界 guard 
 `object_best_model_centernet_conv_tiny_ema_v10.pth` 和
 `binary_best_model_conv_small_ema.pth`。
 
-两份默认权重可从
-[DRAFTS model repository](https://huggingface.co/TorchLight/DRAFTS) 下载：
-文件名和 SHA-256 同时记录在
+两份默认权重可以从任意兼容的模型仓库下载。将
+`DRAFTS_MODEL_BASE_URL` 设置为模型仓库基础地址；文件名和 SHA-256 同时记录在
 [`search_runtime/models/PUT_WEIGHTS_HERE.txt`](search_runtime/models/PUT_WEIGHTS_HERE.txt)。
 
 ```bash
 mkdir -p search_runtime/models
+: "${DRAFTS_MODEL_BASE_URL:?请设置模型仓库基础地址}"
 curl -L \
   -o search_runtime/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
-  https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
+  "${DRAFTS_MODEL_BASE_URL%/}/object_best_model_centernet_conv_tiny_ema_v10.pth"
 curl -L \
   -o search_runtime/models/binary_best_model_conv_small_ema.pth \
-  https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
+  "${DRAFTS_MODEL_BASE_URL%/}/binary_best_model_conv_small_ema.pth"
 ```
 
 ## 只生成注入数据
@@ -147,7 +147,7 @@ python generate_injections.py \
 
 ```bash
 cd DRAFTS/injection_benchmark
-conda activate pytorch
+conda activate "${CONDA_ENV:-pytorch}"
 python run_campaign.py \
   --work-root /path/to/injection_runs/runs \
   --sim-root /path/to/injection_runs/simdata \

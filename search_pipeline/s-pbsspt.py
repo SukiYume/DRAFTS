@@ -15,8 +15,8 @@ Usage:
     python s-pbsspt.py --status       # 查 qstat 状态
     python s-pbsspt.py --help         # 显示帮助
 
-Current CRAFTS example:
-    node_config = {13: 8}
+Generic example:
+    node_config = {1: 8}
     workers_per_gpu = 4
     # total sections = 8 * 4 = 32, matching d-center-binary-gate.py section_num=32
 """
@@ -52,8 +52,9 @@ def create_pbs_script(sections, node, root_path, script_name, job_name_prefix="c
 #PBS -W x=GRES:gpu@1
 
 # 环境
-source /path/to/user/.bashrc
-conda activate pytorch
+SHELL_INIT="${{SHELL_INIT:-${{HOME}}/.bashrc}}"
+source "$SHELL_INIT"
+conda activate "${{CONDA_ENV:-pytorch}}"
 nomps
 
 # 限制每个 Python worker 的 CPU 线程池，避免 OpenBLAS/PyTorch/OpenCV 默认按整机核数开线程
@@ -180,8 +181,8 @@ def submit_jobs(root_path, script_name, node_config, job_name="center", dry_run=
     script_name :
         搜索入口文件名（``d-center-binary-gate.py`` 或 ``d-dm-time-predown.py``）。
     node_config :
-        ``{节点号: GPU数}``，如 ``{13: 6, 16: 8}`` 表示 node13 用 6 块 GPU、node16 用 8 块 GPU
-        （每块 GPU 对应一次 qsub）。
+        ``{节点号: GPU数}``，如 ``{1: 4, 2: 4}`` 表示两个计算节点各使用 4 块 GPU
+        （每块 GPU 对应一次 qsub）。节点号应按目标 PBS 集群配置。
     job_name :
         PBS Job 名前缀，便于 ``qstat`` 过滤。
     dry_run :
@@ -309,9 +310,9 @@ def print_help():
     print(__doc__)
     print("配置说明:")
     print("  在脚本里修改 root_path / script_name / node_config / job_name / workers_per_gpu 五项即可")
-    print("  例如: node_config = {13: 6, 16: 8} 表示 node13 用 6 块 GPU、node16 用 8 块 GPU")
+    print("  例如: node_config = {1: 4, 2: 4} 表示两个计算节点各使用 4 块 GPU")
     print("  workers_per_gpu=4 表示每块 GPU 上并发跑 4 个 section（1~4 皆可）")
-    print("  当前 CRAFTS 示例配置：node_config={13: 8}, workers_per_gpu=4, section_num=32")
+    print("  通用示例：node_config={1: 8}, workers_per_gpu=4, section_num=32")
     print("  总 section 数 = sum(node_config.values()) * workers_per_gpu，应等于搜索脚本里的")
     print("  process_config.section_num")
     print("常用 script_name:")
@@ -340,7 +341,7 @@ if __name__ == '__main__':
     # ---- 从 gate 模板生成目标专用入口脚本 ----
     # 多个目标可分别调用 prepare_gate_script，并把返回值作为 script_name 提交。
     # script_name = prepare_gate_script(
-    #     root_path, 'd-center-binary-gate.py', 'd-center-binary-220912.py',
+    #     root_path, 'd-center-binary-gate.py', 'd-center-binary-target.py',
     #     process_config={
     #         'dm_range': 4096,
     #         'dm_scale': 1,
@@ -355,29 +356,8 @@ if __name__ == '__main__':
     #     data_path='/path/to/observations/source/date/',
     #     save_base='/path/to/observations/',
     #     beam_filter='M01',
-    #     log_file='./processing_log_220912.txt',
+    #     log_file='./processing_log_target.txt',
     # )
-    #
-    # ---- 配置片段 ----
-    # 1) 两阶段 center + binary gate:
-    # root_path = '/path/to/user/CenterTest/RunCode/'
-    # script_name = 'd-center-binary-gate.py'      # python d-center-binary-gate.py <section>
-    # node_config = {15: 6, 13: 7}
-    # job_name = 'frb_center'
-    #
-    # 2) 固定 DM/time 的 binary 流程:
-    # root_path = '/path/to/user/CenterTest/RunCode/'
-    # script_name = 'd-dm-time-predown.py'         # python d-dm-time-predown.py <section>
-    # node_config = {15: 6, 13: 7}
-    # job_name = 'frb_dm'
-    #
-    # 3) 数据检查:
-    # root_path = '/path/to/user/DataCheck/'
-    # script_name = 'c-data-check.py'              # python c-data-check.py <section>
-    # node_config = {3: 2, 4: 2, 5: 1, 6: 1, 7: 1, 8: 1, 9: 1, 10: 1,
-    #                11: 1, 12: 1, 13: 1, 14: 1, 15: 1, 16: 1, 17: 1,
-    #                18: 1, 19: 1}
-    # job_name = 'data_check'
 
     # ---- CLI 解析 ----
     if len(sys.argv) > 1:

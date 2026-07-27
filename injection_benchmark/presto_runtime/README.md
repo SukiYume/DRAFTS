@@ -77,7 +77,7 @@ Run the full blind baseline directly through the Python entrypoint:
 ```bash
 cd DRAFTS/injection_benchmark/presto_runtime
 source /path/to/miniforge3/etc/profile.d/conda.sh
-conda activate presto_gpu
+conda activate "${CONDA_ENV:-presto}"
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
 OUT_ROOT="${OUT_ROOT:-$PWD/results/presto_blind_full_$STAMP}"

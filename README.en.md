@@ -6,8 +6,6 @@
 
 A deep-learning pipeline for fast radio burst and single-pulse searches
 
-[![DRAFTS](https://img.shields.io/badge/Transient%20Search-DRAFTS-da282a)](https://github.com/SukiYume/DRAFTS)
-[![GitHub Stars](https://img.shields.io/github/stars/SukiYume/DRAFTS.svg?label=Stars&logo=github)](https://github.com/SukiYume/DRAFTS/stargazers)
 [![arXiv](https://img.shields.io/badge/arXiv-2410.03200-b31b1b.svg)](https://arxiv.org/abs/2410.03200)
 [![Python](https://img.shields.io/badge/Python-3-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -96,7 +94,8 @@ contracts, output conventions, and operational notes.
 ## Quick start
 
 ```bash
-git clone https://github.com/SukiYume/DRAFTS.git
+: "${DRAFTS_REPOSITORY_URL:?set the repository URL}"
+git clone "$DRAFTS_REPOSITORY_URL" DRAFTS
 cd DRAFTS
 python -m venv .venv
 source .venv/bin/activate
@@ -116,22 +115,15 @@ python -m pip install -r requirements.txt
 Install PyTorch, torchvision, and CuPy with builds compatible with the target
 CUDA driver. Production-search notes are available in
 [`search_pipeline/requirements.txt`](search_pipeline/requirements.txt).
-
-The following production-search stack was exercised on `pg13` on 2026-07-27.
-It is a reproducible baseline, not a minimum-version declaration:
-
-| Python | PyTorch / CUDA build | torchvision | CuPy / CUDA runtime | GPU / driver | Validation |
-|---|---|---|---|---|---|
-| 3.11.15 | 2.5.1+cu121 / 12.1 | 0.20.1+cu121 | 14.0.1 / 12.9 | NVIDIA L40 / 535.129.03 | PyTorch and CuPy saw all 8 GPUs; CUDA tensor/array operations passed |
-
-The same environment contains NumPy 2.4.4, SciPy 1.16.3, Astropy 7.2.0,
-h5py 3.16.0, and Ultralytics 8.4.50. Archive the actual package, GPU, and
-driver versions beside every production search.
+The project is not tied to a particular host or GPU model. Run a CUDA smoke
+test on the target environment and archive the actual Python, package, GPU,
+and driver versions beside every production search.
 
 ### Data and pretrained models
 
-- [DRAFTS training data](https://huggingface.co/datasets/TorchLight/DRAFTS)
-- [DRAFTS pretrained models](https://huggingface.co/TorchLight/DRAFTS)
+Training data and pretrained weights may be supplied from any compatible
+object store or model registry. Set `DRAFTS_MODEL_BASE_URL` to a base URL that
+directly exposes the files below.
 
 The current search runtime uses:
 
@@ -144,12 +136,13 @@ Download both files directly into `search_pipeline/models/` for observation sear
 
 ```bash
 mkdir -p search_pipeline/models
+: "${DRAFTS_MODEL_BASE_URL:?set the model-registry base URL}"
 curl -L \
   -o search_pipeline/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
-  https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
+  "${DRAFTS_MODEL_BASE_URL%/}/object_best_model_centernet_conv_tiny_ema_v10.pth"
 curl -L \
   -o search_pipeline/models/binary_best_model_conv_small_ema.pth \
-  https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
+  "${DRAFTS_MODEL_BASE_URL%/}/binary_best_model_conv_small_ema.pth"
 ```
 
 The injection benchmark uses the same two files in the runtime location described
@@ -299,8 +292,8 @@ Linux shell entry points can be checked with `bash -n path/to/script.sh`.
 ## DRAFTS and AFTER
 
 DRAFTS performs **search and candidate selection**. After candidate TOA/DM
-values have been confirmed, [AFTER](https://github.com/SukiYume/AFTER)
-continues the FAST workflow with burst cutting, calibration, label review,
+values have been confirmed, AFTER continues the FAST workflow with burst
+cutting, calibration, label review,
 energy measurements, and polarization analysis.
 
 ```text

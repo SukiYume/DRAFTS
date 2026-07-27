@@ -49,14 +49,8 @@ CuPy 不在通用依赖清单中：请单独安装与目标节点 CUDA toolkit �
 才需要额外安装 `numba`。PyTorch 与 torchvision 同样应选择和目标 CUDA 环境匹配的
 wheel。
 
-2026-07-27 在 `pg13` 完成了以下生产环境实测：
-
-| Python | PyTorch / CUDA build | torchvision | CuPy / runtime | GPU / 驱动 | GPU smoke test |
-|---|---|---|---|---|---|
-| 3.11.15 | 2.5.1+cu121 / 12.1 | 0.20.1+cu121 | 14.0.1 / 12.9 | NVIDIA L40 / 535.129.03 | PyTorch、CuPy 均识别 8 卡，基本 CUDA 运算通过 |
-
-这是已验证基线，不是最低版本约束；同一环境的 NumPy/SciPy/Astropy/h5py 分别为
-2.4.4/1.16.3/7.2.0/3.16.0。
+本目录不绑定特定主机、GPU 型号或驱动版本。应根据目标 CUDA 环境选择兼容的
+PyTorch、torchvision 与 CuPy，并在正式搜索前运行下面的环境检查。
 
 检查环境：
 
@@ -77,17 +71,18 @@ PY
 | CenterNet + ConvNeXt-Tiny detector v10 | `object_best_model_centernet_conv_tiny_ema_v10.pth` | `bcad4e710f5f1ccd3c8609d35a8d3fbfc36abd1d85bfefd035e945a573fb0629` |
 | ConvNeXt-Small binary classifier | `binary_best_model_conv_small_ema.pth` | `2055745aab76ddc16074516aa7b9aafdfaedf16df37ce8924389573eab27ffd8` |
 
-从 [DRAFTS model repository](https://huggingface.co/TorchLight/DRAFTS) 下载到
-`models/`：
+从任意兼容的模型仓库下载到 `models/`。以下示例通过
+`DRAFTS_MODEL_BASE_URL` 指定基础地址：
 
 ```bash
 mkdir -p models
+: "${DRAFTS_MODEL_BASE_URL:?请设置模型仓库基础地址}"
 curl -L \
   -o models/object_best_model_centernet_conv_tiny_ema_v10.pth \
-  https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
+  "${DRAFTS_MODEL_BASE_URL%/}/object_best_model_centernet_conv_tiny_ema_v10.pth"
 curl -L \
   -o models/binary_best_model_conv_small_ema.pth \
-  https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
+  "${DRAFTS_MODEL_BASE_URL%/}/binary_best_model_conv_small_ema.pth"
 ```
 
 当前默认：
@@ -464,4 +459,4 @@ benchmark 结果依赖存储、进程并发、FITS 数据布局和 GPU，报告�
 | CUDA OOM | 减小 `dm_range` 或 `block_size`，或降低同一 GPU 上并发进程数。 |
 | 输出目录混有旧结果 | 换新的输出目录，或清理目标目录后重跑。 |
 | `import cupy` 失败 | 安装与节点 CUDA toolkit 匹配的 CuPy 构建。 |
-| 新服务器 `models/` 为空 | 按“模型权重”一节下载两份默认权重并校验文件名。 |
+| 新环境的 `models/` 为空 | 按“模型权重”一节下载两份默认权重并校验文件名。 |

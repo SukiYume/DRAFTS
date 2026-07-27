@@ -2,8 +2,8 @@
 
 本目录训练 DRAFTS 搜索链路的第一阶段模型：从 512 × 512 time–DM 图中定位暂现源
 候选中心，并将中心坐标转换为候选 TOA 与 DM。当前默认部署模型使用
-CenterNet + ConvNeXt-Tiny；公开权重位于
-[DRAFTS model repository](https://huggingface.co/TorchLight/DRAFTS)。
+CenterNet + ConvNeXt-Tiny。权重可以从任意兼容的模型仓库提供；以下示例通过
+`DRAFTS_MODEL_BASE_URL` 指定基础地址。
 
 ## 目录职责
 
@@ -101,9 +101,10 @@ args.json
 先下载当前默认检测器：
 
 ```bash
+: "${DRAFTS_MODEL_BASE_URL:?请设置模型仓库基础地址}"
 curl -L \
   -o /path/to/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
-  https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
+  "${DRAFTS_MODEL_BASE_URL%/}/object_best_model_centernet_conv_tiny_ema_v10.pth"
 ```
 
 然后抽查 validation 图：

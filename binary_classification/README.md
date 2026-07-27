@@ -2,8 +2,8 @@
 
 本目录训练 DRAFTS 搜索链路的第二阶段模型：CenterNet 给出候选位置后，
 ConvNeXt 二分类器判断候选是否更像真实 burst。默认部署模型是
-`convnext_small`，对应的公开权重可以直接从
-[DRAFTS model repository](https://huggingface.co/TorchLight/DRAFTS) 下载。
+`convnext_small`。权重可以从任意兼容的模型仓库提供；以下示例通过
+`DRAFTS_MODEL_BASE_URL` 指定基础地址。
 
 ## 目录职责
 
@@ -102,9 +102,10 @@ logs.json
 先下载当前默认分类器：
 
 ```bash
+: "${DRAFTS_MODEL_BASE_URL:?请设置模型仓库基础地址}"
 curl -L \
   -o /path/to/models/binary_best_model_conv_small_ema.pth \
-  https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
+  "${DRAFTS_MODEL_BASE_URL%/}/binary_best_model_conv_small_ema.pth"
 ```
 
 然后运行：

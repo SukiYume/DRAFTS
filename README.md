@@ -6,8 +6,6 @@
 
 面向快速射电暴与单脉冲的深度学习搜索流水线
 
-[![DRAFTS](https://img.shields.io/badge/Transient%20Search-DRAFTS-da282a)](https://github.com/SukiYume/DRAFTS)
-[![GitHub Stars](https://img.shields.io/github/stars/SukiYume/DRAFTS.svg?label=Stars&logo=github)](https://github.com/SukiYume/DRAFTS/stargazers)
 [![arXiv](https://img.shields.io/badge/arXiv-2410.03200-b31b1b.svg)](https://arxiv.org/abs/2410.03200)
 [![Python](https://img.shields.io/badge/Python-3-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -98,7 +96,8 @@ flowchart LR
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/SukiYume/DRAFTS.git
+: "${DRAFTS_REPOSITORY_URL:?请设置代码仓库地址}"
+git clone "$DRAFTS_REPOSITORY_URL" DRAFTS
 cd DRAFTS
 ```
 
@@ -120,22 +119,15 @@ python -m pip install -U pip
 python -m pip install -r requirements.txt
 ```
 
-PyTorch、torchvision 与 CuPy 应根据目标机器的 CUDA 驱动安装。生产搜索环境的补充依赖
+PyTorch、torchvision 与 CuPy 应根据目标 CUDA 驱动安装。生产搜索环境的补充依赖
 和版本提示见 [`search_pipeline/requirements.txt`](search_pipeline/requirements.txt)。
+本项目不绑定特定主机或 GPU 型号；正式运行前应在目标环境执行 CUDA smoke test，
+并把实际 Python、依赖、GPU 与驱动版本随结果归档。
 
-2026-07-27 在 `pg13` 实际验证的生产搜索环境如下；它是可复现基线，不是最低版本声明：
+### 3. 准备数据与模型
 
-| Python | PyTorch / CUDA build | torchvision | CuPy / CUDA runtime | GPU / 驱动 | 验证结果 |
-|---|---|---|---|---|---|
-| 3.11.15 | 2.5.1+cu121 / 12.1 | 0.20.1+cu121 | 14.0.1 / 12.9 | NVIDIA L40 / 535.129.03 | PyTorch 与 CuPy 均识别 8 卡，CUDA tensor/array 运算通过 |
-
-同一环境还包含 NumPy 2.4.4、SciPy 1.16.3、Astropy 7.2.0、h5py 3.16.0 和
-Ultralytics 8.4.50。每次正式搜索仍应把实际版本、GPU 和驱动随结果归档。
-
-### 3. 准备公开数据与模型
-
-- [DRAFTS training data](https://huggingface.co/datasets/TorchLight/DRAFTS)
-- [DRAFTS pretrained models](https://huggingface.co/TorchLight/DRAFTS)
+训练数据和预训练权重可以来自任意兼容的对象存储或模型仓库。下载默认权重时，
+将 `DRAFTS_MODEL_BASE_URL` 设置为能够直接访问下列文件的基础地址。
 
 当前搜索链路使用：
 
@@ -148,12 +140,13 @@ Ultralytics 8.4.50。每次正式搜索仍应把实际版本、GPU 和驱动随�
 
 ```bash
 mkdir -p search_pipeline/models
+: "${DRAFTS_MODEL_BASE_URL:?请设置模型仓库基础地址}"
 curl -L \
   -o search_pipeline/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
-  https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
+  "${DRAFTS_MODEL_BASE_URL%/}/object_best_model_centernet_conv_tiny_ema_v10.pth"
 curl -L \
   -o search_pipeline/models/binary_best_model_conv_small_ema.pth \
-  https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
+  "${DRAFTS_MODEL_BASE_URL%/}/binary_best_model_conv_small_ema.pth"
 ```
 
 注入基准使用相同的两个文件，放置位置见
@@ -298,8 +291,7 @@ Shell 脚本可在 Linux 环境中使用 `bash -n path/to/script.sh` 做静态�
 ## DRAFTS 与 AFTER
 
 DRAFTS 负责在观测数据中**寻找和筛选暂现源候选**。当候选 TOA/DM 已经确认后，可以把
-后续 FAST burst 裁切、定标、标注复核、能量与偏振分析交给
-[AFTER](https://github.com/SukiYume/AFTER)。
+后续 FAST burst 裁切、定标、标注复核、能量与偏振分析交给 AFTER。
 
 ```text
 DRAFTS: search and candidate selection
