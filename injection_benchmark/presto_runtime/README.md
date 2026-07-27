@@ -1,9 +1,9 @@
 # DRAFTS PRESTO blind single-pulse baseline
 
-This directory contains the PRESTO baseline for the injection experiment.  The
+This directory contains the PRESTO baseline for the injection benchmark.  The
 formal recall/precision figures use a blind DM search, not truth-DM windows.
-The searched FITS live in the experiment-level `simdata/` directory, and the
-truth manifests live in the experiment-level `truth_archive/` directory.  DL
+The searched FITS live in the benchmark-level `simdata/` directory, and the
+truth manifests live in the benchmark-level `truth_archive/` directory.  DL
 `runs/` directories are search outputs only.
 
 ## Files
@@ -75,7 +75,7 @@ By default the script keeps only event-level JSONL files.  Raw PRESTO
 Run the full blind baseline directly through the Python entrypoint:
 
 ```bash
-cd DRAFTS/injection_experiment/presto_runtime
+cd DRAFTS/injection_benchmark/presto_runtime
 source /path/to/miniforge3/etc/profile.d/conda.sh
 conda activate presto_gpu
 

@@ -1,6 +1,6 @@
 """分批运行 raw8/packed2 注入评估和 DRAFTS 搜索。
 
-中文维护说明：本文件是注入实验的主控入口，负责按 batch 调用注入、DL 搜索、
+中文维护说明：本文件是注入基准的主控入口，负责按 batch 调用注入、DL 搜索、
 单批匹配分析和跨批汇总；真正的 FITS 注入在 `generate_injections.py`，真正的 GPU 搜索在
 `search_runtime/`。当前默认搜索配置固定为 v10 CenterNet、det_prob=0.30、
 classifier 输入 1024 个采样点并额外做 2 倍时间降采样。
@@ -35,7 +35,11 @@ from typing import TextIO
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_BACKGROUND_DIR = Path("/path/to/generation_data/rawdata")
-DEFAULT_BASE_ROOT = Path(os.environ.get("INJECTION_EXPERIMENT_ROOT", str(HERE)))
+DEFAULT_BASE_ROOT = Path(
+    os.environ.get("INJECTION_BENCHMARK_ROOT")
+    or os.environ.get("INJECTION_EXPERIMENT_ROOT")
+    or str(HERE)
+)
 DEFAULT_WORK_ROOT = Path(os.environ.get("INJECTION_WORK_ROOT", str(DEFAULT_BASE_ROOT / "runs")))
 DEFAULT_SIM_ROOT = Path(os.environ.get("INJECTION_SIM_ROOT", str(DEFAULT_BASE_ROOT / "simdata")))
 DEFAULT_TRUTH_ROOT = Path(os.environ.get("INJECTION_TRUTH_ROOT", str(DEFAULT_BASE_ROOT / "truth_archive")))

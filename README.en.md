@@ -17,7 +17,7 @@ A deep-learning pipeline for fast radio burst and single-pulse searches
 [Quick start](#quick-start) ·
 [Training](#model-training) ·
 [Search](#searching-real-observation-data) ·
-[Injection tests](#injection-experiments) ·
+[Injection benchmark](#injection-benchmark) ·
 [简体中文](README.md)
 
 </div>
@@ -61,7 +61,7 @@ FAST observations, and raw8/packed2 injection evaluation.
 
 ```mermaid
 flowchart LR
-    A["Real background FITS"] --> B["Simulated FRB injection<br/>generate_burst"]
+    A["Real background FITS"] --> B["Simulated FRB injection<br/>dataset_generation"]
     B --> C["time–DM H5 training set"]
     C --> D["CenterNet detector training<br/>object_detection"]
     C --> E["ConvNeXt classifier training<br/>binary_classification"]
@@ -83,11 +83,11 @@ flowchart LR
 
 | Path | Role in DRAFTS |
 |---|---|
-| [`generate_burst/`](generate_burst/) | Inject simulated FRBs into real FAST backgrounds and build 512 × 512 time–DM H5 training sets. |
+| [`dataset_generation/`](dataset_generation/) | Inject simulated FRBs into real FAST backgrounds and build 512 × 512 time–DM H5 training sets. |
 | [`object_detection/`](object_detection/) | Train, evaluate, and run the current CenterNet detector. |
 | [`binary_classification/`](binary_classification/) | Train and evaluate ConvNeXt/SPPConvNeXt candidate classifiers. |
-| [`runcode/`](runcode/) | Deployable real-observation search, fixed-DM follow-up, PBS submission, and benchmarks. |
-| [`injection_experiment/`](injection_experiment/) | raw8/packed2 generation, DRAFTS search, truth matching, aggregation, and the PRESTO baseline. |
+| [`search_pipeline/`](search_pipeline/) | Deployable real-observation search, fixed-DM follow-up, PBS submission, and benchmarks. |
+| [`injection_benchmark/`](injection_benchmark/) | raw8/packed2 generation, DRAFTS search, truth matching, aggregation, and the PRESTO baseline. |
 | [`requirements.txt`](requirements.txt) | Common Python dependencies; install CUDA packages for the target machine separately. |
 
 Each workflow directory has its own README with detailed parameters, data
@@ -115,7 +115,7 @@ python -m pip install -r requirements.txt
 
 Install PyTorch, torchvision, and CuPy with builds compatible with the target
 CUDA driver. Production-search notes are available in
-[`runcode/requirements.txt`](runcode/requirements.txt).
+[`search_pipeline/requirements.txt`](search_pipeline/requirements.txt).
 
 The following production-search stack was exercised on `pg13` on 2026-07-27.
 It is a reproducible baseline, not a minimum-version declaration:
@@ -140,27 +140,27 @@ The current search runtime uses:
 | CenterNet ConvNeXt-Tiny detector v10 | `object_best_model_centernet_conv_tiny_ema_v10.pth` | `bcad4e710f5f1ccd3c8609d35a8d3fbfc36abd1d85bfefd035e945a573fb0629` |
 | ConvNeXt-Small binary classifier | `binary_best_model_conv_small_ema.pth` | `2055745aab76ddc16074516aa7b9aafdfaedf16df37ce8924389573eab27ffd8` |
 
-Download both files directly into `runcode/models/` for observation searches:
+Download both files directly into `search_pipeline/models/` for observation searches:
 
 ```bash
-mkdir -p runcode/models
+mkdir -p search_pipeline/models
 curl -L \
-  -o runcode/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
+  -o search_pipeline/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
   https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
 curl -L \
-  -o runcode/models/binary_best_model_conv_small_ema.pth \
+  -o search_pipeline/models/binary_best_model_conv_small_ema.pth \
   https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
 ```
 
-Injection experiments use the same two files in the runtime location described
-in [`injection_experiment/README.md`](injection_experiment/README.md).
+The injection benchmark uses the same two files in the runtime location described
+in [`injection_benchmark/README.md`](injection_benchmark/README.md).
 
 ## Model training
 
 ### Generate CenterNet training data
 
 ```bash
-cd generate_burst
+cd dataset_generation
 RAW_DIR=/path/to/background_fits \
 GEN_ROOT=/path/to/generated_training_data \
 ./run_generation.sh
@@ -168,7 +168,7 @@ GEN_ROOT=/path/to/generated_training_data \
 
 The default campaign generates 50,000 unique injected events, four crops per
 event, and sharded outputs that limit concurrent FITS I/O. See
-[`generate_burst/README.md`](generate_burst/README.md) for the injection model,
+[`dataset_generation/README.md`](dataset_generation/README.md) for the injection model,
 sampling distributions, merge step, metadata, and validation tools.
 
 ### Train the CenterNet detector
@@ -181,7 +181,7 @@ EPOCHS=50 \
 ./train.sh "0,1,2,3,4,5,6,7" centernet-conv-tiny
 ```
 
-Copy the selected EMA checkpoint to `runcode/models/` before deployment. See
+Copy the selected EMA checkpoint to `search_pipeline/models/` before deployment. See
 [`object_detection/README.md`](object_detection/README.md) for data formats,
 supported backbones, training arguments, and evaluation.
 
@@ -201,7 +201,7 @@ layout, model selection, and training arguments.
 
 ## Searching real observation data
 
-Search code lives in [`runcode/`](runcode/) and can be deployed as a
+Search code lives in [`search_pipeline/`](search_pipeline/) and can be deployed as a
 self-contained runtime directory.
 
 | Task | Entry point |
@@ -215,7 +215,7 @@ self-contained runtime directory.
 Generic blind-search example:
 
 ```bash
-python runcode/t-blind-section.py \
+python search_pipeline/t-blind-section.py \
   --section 0 \
   --data-path /path/to/fast_observation \
   --output-root /path/to/drafts_search_output \
@@ -223,14 +223,14 @@ python runcode/t-blind-section.py \
   --beam M01
 ```
 
-Place detector and classifier checkpoints in `runcode/models/` before running
+Place detector and classifier checkpoints in `search_pipeline/models/` before running
 the search. The full CLI, manifest workflow, fixed-DM mode, output layout, and
 troubleshooting guide are documented in
-[`runcode/README.md`](runcode/README.md).
+[`search_pipeline/README.md`](search_pipeline/README.md).
 
-## Injection experiments
+## Injection benchmark
 
-[`injection_experiment/`](injection_experiment/) measures DRAFTS search
+[`injection_benchmark/`](injection_benchmark/) measures DRAFTS search
 performance on controlled injected signals. It covers signal generation,
 raw8/packed2 searches, truth matching, batch aggregation, and a PRESTO
 baseline.
@@ -248,13 +248,13 @@ baseline.
 Generic search-only example:
 
 ```bash
-python injection_experiment/run_campaign.py \
+python injection_benchmark/run_campaign.py \
   --work-root /path/to/injection_runs \
   --run-label example_campaign \
   --batches 20 \
   --count-per-batch 500 \
   --search-only \
-  --runtime-dir injection_experiment/search_runtime \
+  --runtime-dir injection_benchmark/search_runtime \
   --gpu-num 8 \
   --gpu-ids 0,1,2,3,4,5,6,7 \
   --detector-type centernet_conv_tiny \
@@ -263,7 +263,7 @@ python injection_experiment/run_campaign.py \
   --classifier-model-name convnext_small
 ```
 
-See [`injection_experiment/README.md`](injection_experiment/README.md) for
+See [`injection_benchmark/README.md`](injection_benchmark/README.md) for
 weight placement, raw8/packed2 parallel searches, truth tolerances, and the
 PRESTO baseline.
 
@@ -287,11 +287,11 @@ From the repository root:
 
 ```bash
 python -m compileall -q \
-  generate_burst \
+  dataset_generation \
   object_detection \
   binary_classification \
-  runcode \
-  injection_experiment
+  search_pipeline \
+  injection_benchmark
 ```
 
 Linux shell entry points can be checked with `bash -n path/to/script.sh`.

@@ -126,13 +126,13 @@ python binary_infer.py \
 真实观测搜索默认读取：
 
 ```text
-runcode/models/binary_best_model_conv_small_ema.pth
+search_pipeline/models/binary_best_model_conv_small_ema.pth
 ```
 
-注入实验默认读取：
+注入基准默认读取：
 
 ```text
-injection_experiment/search_runtime/models/binary_best_model_conv_small_ema.pth
+injection_benchmark/search_runtime/models/binary_best_model_conv_small_ema.pth
 ```
 
 下载后保持文件名不变，或在对应入口中显式传入 `--classifier-ckpt`；同时保持

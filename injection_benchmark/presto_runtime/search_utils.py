@@ -1,4 +1,4 @@
-"""PRESTO 注入实验的公共统计和画图工具。
+"""PRESTO 注入基准的公共统计和画图工具。
 
 本模块只放跨脚本共享的纯函数：参数分箱、truth/event 关联、CSV 读写以及最终
 recall/precision-proxy 图。PRESTO 命令执行、结果包导出和阈值扫描入口分别留在

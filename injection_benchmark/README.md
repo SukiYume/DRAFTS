@@ -1,4 +1,4 @@
-# DRAFTS 注入实验
+# DRAFTS 注入基准
 
 本目录用于评估 DRAFTS 搜索链路：把模拟 FRB 注入真实 FAST 背景，生成 raw8/packed2 FITS，调用搜索 runtime，匹配 truth manifest，并汇总召回、误报和量化影响。
 
@@ -25,7 +25,7 @@ generate_injections.py
 | `evaluate_results.py` | 读取 truth 与候选表，做 source/event 匹配和误报统计。 |
 | `aggregate_results.py` | 汇总多个 batch 的分析结果。 |
 | `matching.py` | DRAFTS 与 PRESTO 共用的最大基数、最小代价一对一匹配。 |
-| `search_runtime/` | 注入实验专用搜索运行时。运行前需要把检测器和 binary 分类器权重放入 `search_runtime/models/`。 |
+| `search_runtime/` | 注入基准专用搜索运行时。运行前需要把检测器和 binary 分类器权重放入 `search_runtime/models/`。 |
 | `presto_runtime/` | PRESTO blind-search 基线、快速汇总和阈值重画脚本。 |
 | `simdata/` | 运行时生成的大体积 raw8/packed2 注入 FITS，供 DL 和 PRESTO 共用。 |
 | `truth_archive/` | 每个 batch/量化版本的 `truth_manifest.jsonl` 和 `run_config.json`，供 DL 和 PRESTO 共用。 |
@@ -34,16 +34,16 @@ generate_injections.py
 Git 只跟踪源码、README 和权重清单。`simdata/`、`truth_archive/`、`runs/`、结果目录，
 以及本地论文/笔记目录均由 `.gitignore` 排除，不属于可提交的实验代码。
 
-`search_runtime/` 与 `runcode/` 共享搜索模型实现，但不是整目录逐字镜像：
+`search_runtime/` 与 `search_pipeline/` 共享搜索模型实现，但不是整目录逐字镜像：
 `binary_model.py`、`centernet_model.py` 和 `centernet_eval.py` 应保持逐文件一致；
 `d-center-binary-core.py`、`d-center-binary-gate.py` 与 `t-blind-section.py` 则保留
 注入评估需要的候选/proposal manifest、重叠 DM window、classifier time
 downsample 和物理 TOA-DM 去重接口。同步生产搜索改动时应逐项移植并重新执行
-campaign dry-run，不能直接用 `runcode/` 覆盖整个目录。
+campaign dry-run，不能直接用 `search_pipeline/` 覆盖整个目录。
 
 ## 注入信号模型
 
-注入实验使用与训练 H5 生成相同的物理动态谱形式，但参数范围更窄，目标是可控评估搜索召回、误报和 raw8/packed2 量化影响。
+注入基准使用与训练 H5 生成相同的物理动态谱形式，但参数范围更窄，目标是可控评估搜索召回、误报和 raw8/packed2 量化影响。
 
 单个注入源的构建方式：
 
@@ -112,12 +112,12 @@ curl -L \
 复用同一批注入数据比较不同模型时，先生成一次注入数据：
 
 ```bash
-cd DRAFTS/injection_experiment
+cd DRAFTS/injection_benchmark
 python run_campaign.py \
   --background-dir /path/to/rawdata \
-  --work-root /path/to/injection_experiment/runs \
-  --sim-root /path/to/injection_experiment/simdata \
-  --truth-root /path/to/injection_experiment/truth_archive \
+  --work-root /path/to/injection_benchmark/runs \
+  --sim-root /path/to/injection_benchmark/simdata \
+  --truth-root /path/to/injection_benchmark/truth_archive \
   --run-label my_injection_10000 \
   --batches 20 \
   --count-per-batch 500 \
@@ -146,7 +146,7 @@ python generate_injections.py \
 可以替换成不会与已有结果冲突的名称。
 
 ```bash
-cd DRAFTS/injection_experiment
+cd DRAFTS/injection_benchmark
 conda activate pytorch
 python run_campaign.py \
   --work-root /path/to/injection_runs/runs \
@@ -178,7 +178,7 @@ python run_campaign.py \
 
 ```bash
 python evaluate_results.py \
-  --truth /path/to/injection_experiment/truth_archive/<run_label>_bXX_raw8/truth_manifest.jsonl \
+  --truth /path/to/injection_benchmark/truth_archive/<run_label>_bXX_raw8/truth_manifest.jsonl \
   --candidates /path/to/candidates.csv \
   --output-dir /path/to/analysis \
   --source-dm-tolerance 60 \
@@ -196,6 +196,9 @@ DL 与 PRESTO 的候选先按时间/DM 容差形成事件，但事件内任意�
 
 ## 运行注意事项
 
+- 默认根目录环境变量为 `INJECTION_BENCHMARK_ROOT`；为兼容已有远端任务，
+  `INJECTION_EXPERIMENT_ROOT` 仍作为后备名称。`INJECTION_WORK_ROOT`、
+  `INJECTION_SIM_ROOT` 和 `INJECTION_TRUTH_ROOT` 的优先级更高。
 - 注入 FITS 体积很大。只有需要复用同一批注入数据做模型对比时才使用 `--keep-injected-fits`。
 - `--search-only` 依赖 `simdata/` 和 `truth_archive/` 中已有的注入数据；换 `--run-label` 前先确认对应 campaign 已生成。
 - `--overwrite-search` 只用于替换搜索、分析和汇总产物；它不负责重新生成注入 truth。

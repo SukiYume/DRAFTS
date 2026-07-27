@@ -141,7 +141,7 @@ source/date2/*.fits
 因此，其他望远镜、其他接收机频段、倒置频率轴，或物理坏频段不同的数据都不能只改
 FITS 路径后直接视为已验证。应先按目标观测修改
 `d-center-binary-core.py::_build_dedispersion_cache()` 的 `index_array`，再用已知
-脉冲和注入实验验证召回、DM/TOA 误差；`NCHAN` 还必须能整除到 512 通道。
+脉冲和注入基准验证召回、DM/TOA 误差；`NCHAN` 还必须能整除到 512 通道。
 
 ### 损坏 FITS 的连续搜索策略
 

@@ -9,7 +9,7 @@
 #     bash t-object-matrix.sh
 set -Eeuo pipefail
 
-ROOT="${ROOT:-/path/to/drafts_runs/runcode}"
+ROOT="${ROOT:-/path/to/drafts_runs/search_pipeline}"
 DATA_PATH="${DATA_PATH:-/path/to/observations/source/date}"
 OUT_ROOT="${OUT_ROOT:-/path/to/drafts_runs/object_backend}"
 CONDA_SH="${CONDA_SH:-/path/to/miniforge3/etc/profile.d/conda.sh}"

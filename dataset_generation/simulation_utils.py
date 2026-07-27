@@ -6,7 +6,7 @@
 
 generate_dataset.py 把本模块同时当作 ``model``（用 A）和 ``inj``（用 B）。
 完整的“注入→写 raw8/2-bit FITS→搜索”流程不在本模块中；若需该流程，请使用
-`injection_experiment/generate_injections.py` 和 `injection_experiment/run_campaign.py`。
+`injection_benchmark/generate_injections.py` 和 `injection_benchmark/run_campaign.py`。
 """
 
 from __future__ import annotations

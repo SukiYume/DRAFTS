@@ -39,7 +39,7 @@ scene 的 mosaic/crop 帧不会跨集合。只有完成分组拆分后的 train 
 存在情况过采样，validation 始终保持原始分布。缺少 `original_slice` 时加载器会直接
 报错，避免退回可能泄漏的逐帧随机拆分。
 
-训练数据可由 [`../generate_burst/`](../generate_burst/) 生成。
+训练数据可由 [`../dataset_generation/`](../dataset_generation/) 生成。
 
 ## 安装
 
@@ -127,13 +127,13 @@ validation 指标。评估时，每个预测会与容差内“尚未使用且距
 真实观测搜索默认读取：
 
 ```text
-runcode/models/object_best_model_centernet_conv_tiny_ema_v10.pth
+search_pipeline/models/object_best_model_centernet_conv_tiny_ema_v10.pth
 ```
 
-注入实验默认读取：
+注入基准默认读取：
 
 ```text
-injection_experiment/search_runtime/models/object_best_model_centernet_conv_tiny_ema_v10.pth
+injection_benchmark/search_runtime/models/object_best_model_centernet_conv_tiny_ema_v10.pth
 ```
 
 下载后保持文件名不变，或在入口中显式传入 `--detector-ckpt`，并使用

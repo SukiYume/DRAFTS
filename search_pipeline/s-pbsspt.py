@@ -329,7 +329,7 @@ def print_help():
 if __name__ == '__main__':
 
     # ---- 配置 ----
-    root_path       = '/path/to/drafts_runs/runcode/'                # 末尾要带 '/'
+    root_path       = '/path/to/drafts_runs/search_pipeline/'                # 末尾要带 '/'
     workers_per_gpu = 4                                                   # 每块 GPU 并发跑几个 section（1~4）
     script_name     = 'd-center-binary-gate.py'                           # 或 'd-dm-time-predown.py'
     node_config     = {1: 8}                                              # {节点号: GPU数}

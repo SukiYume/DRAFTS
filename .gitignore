@@ -38,13 +38,13 @@ Desktop.ini
 *.npz
 /object_detection/Data/*_annotations.json
 /binary_classification/Data/
-/generate_burst/rawdata/
-/generate_burst/shards_*/
-/generate_burst/*.config.json
-/generate_burst/*.metadata.jsonl
-/generate_burst/*.inspect.json
-/generate_burst/*_visual_inspect.json
-/generate_burst/*_contact.png
+/dataset_generation/rawdata/
+/dataset_generation/shards_*/
+/dataset_generation/*.config.json
+/dataset_generation/*.metadata.jsonl
+/dataset_generation/*.inspect.json
+/dataset_generation/*_visual_inspect.json
+/dataset_generation/*_contact.png
 
 # Model checkpoints and exported runtimes
 *.pth
@@ -64,27 +64,27 @@ shards_*/
 /binary_classification/logs/
 /object_detection/logs*/
 /binary_classification/binary_predictions.csv
-/runcode/c-candidates.csv
-/runcode/c-candidates.json
-/runcode/DataCheck_Plots/
-/runcode/processing_log*.txt
-/runcode/pbsspt/
+/search_pipeline/c-candidates.csv
+/search_pipeline/c-candidates.json
+/search_pipeline/DataCheck_Plots/
+/search_pipeline/processing_log*.txt
+/search_pipeline/pbsspt/
 
 # Local-only or retired code/results
-/runcode/legacy/
-/runcode/d-dm-time-predown-121102.py
+/search_pipeline/legacy/
+/search_pipeline/d-dm-time-predown-121102.py
 /binary_classification/nenufar_eval_*/
 /binary_classification/resolution_eval_*/
 /output/
 
-# Injection repository boundary: keep only the experiment/runtime code
-/injection_experiment/aastex702/
-/injection_experiment/code_paper/
-/injection_experiment/notes/
-/injection_experiment/results/
-/injection_experiment/runs/
-/injection_experiment/simdata/
-/injection_experiment/truth_archive/
+# Injection benchmark boundary: keep only benchmark/runtime code
+/injection_benchmark/aastex702/
+/injection_benchmark/code_paper/
+/injection_benchmark/notes/
+/injection_benchmark/results/
+/injection_benchmark/runs/
+/injection_benchmark/simdata/
+/injection_benchmark/truth_archive/
 
 # LaTeX build products
 *.aux

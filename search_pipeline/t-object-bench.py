@@ -531,7 +531,7 @@ def main():
     if not detector_ckpt.exists():
         raise FileNotFoundError(
             f"Detector checkpoint not found: {detector_ckpt}. "
-            "Pass --detector-ckpt explicitly for models not copied to runcode/models."
+            "Pass --detector-ckpt explicitly for models not copied to search_pipeline/models."
         )
 
     output_root = args.output_root

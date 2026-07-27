@@ -38,9 +38,9 @@ from typing import Iterable
 
 import numpy as np
 
-EXPERIMENT_DIR = Path(__file__).resolve().parent.parent
-if str(EXPERIMENT_DIR) not in sys.path:
-    sys.path.insert(0, str(EXPERIMENT_DIR))
+BENCHMARK_DIR = Path(__file__).resolve().parent.parent
+if str(BENCHMARK_DIR) not in sys.path:
+    sys.path.insert(0, str(BENCHMARK_DIR))
 
 from matching import maximum_cardinality_min_cost_matching
 from search_utils import (
@@ -62,10 +62,14 @@ from search_utils import (
 
 
 DEFAULT_RUN_LABEL = "v10_det03_injection_10000"
-DEFAULT_BASE_ROOT = Path(os.environ.get("INJECTION_EXPERIMENT_ROOT", "/path/to/drafts_runs/injection_experiment"))
+DEFAULT_BASE_ROOT = Path(
+    os.environ.get("INJECTION_BENCHMARK_ROOT")
+    or os.environ.get("INJECTION_EXPERIMENT_ROOT")
+    or "/path/to/drafts_runs/injection_benchmark"
+)
 DEFAULT_SIM_ROOT = DEFAULT_BASE_ROOT / "simdata"
 DEFAULT_TRUTH_ROOT = DEFAULT_BASE_ROOT / "truth_archive"
-DEFAULT_OUTPUT_BASE = Path("/path/to/drafts_runs/injection_experiment/presto_runtime")
+DEFAULT_OUTPUT_BASE = Path("/path/to/drafts_runs/injection_benchmark/presto_runtime")
 DEFAULT_SCRATCH_ROOT = Path(os.environ.get("PRESTO_SCRATCH_ROOT", str(DEFAULT_OUTPUT_BASE / "scratch")))
 
 

@@ -17,7 +17,7 @@
 [快速开始](#快速开始) ·
 [训练](#模型训练) ·
 [真实数据搜索](#真实数据搜索) ·
-[注入实验](#注入实验) ·
+[注入基准](#注入基准) ·
 [English](README.en.md)
 
 </div>
@@ -60,7 +60,7 @@ DRAFTS 的核心由三部分组成：
 
 ```mermaid
 flowchart LR
-    A["真实背景 FITS"] --> B["模拟 FRB 注入<br/>generate_burst"]
+    A["真实背景 FITS"] --> B["模拟 FRB 注入<br/>dataset_generation"]
     B --> C["time–DM H5 训练集"]
     C --> D["CenterNet 检测器训练<br/>object_detection"]
     C --> E["ConvNeXt 分类器训练<br/>binary_classification"]
@@ -84,11 +84,11 @@ flowchart LR
 
 | 路径 | 在 DRAFTS 中的职责 |
 |---|---|
-| [`generate_burst/`](generate_burst/) | 向真实 FAST 背景注入模拟 FRB，生成 512 × 512 time–DM 图和 CenterNet H5 训练集。 |
+| [`dataset_generation/`](dataset_generation/) | 向真实 FAST 背景注入模拟 FRB，生成 512 × 512 time–DM 图和 CenterNet H5 训练集。 |
 | [`object_detection/`](object_detection/) | 训练、评估和推理当前 CenterNet 检测器。 |
 | [`binary_classification/`](binary_classification/) | 训练和评估 ConvNeXt/SPPConvNeXt 候选二分类器。 |
-| [`runcode/`](runcode/) | 可部署的真实观测搜索入口、fixed-DM follow-up、PBS 提交和后端 benchmark。 |
-| [`injection_experiment/`](injection_experiment/) | DRAFTS 注入实验代码：raw8/packed2 生成、搜索、truth matching、汇总和 PRESTO 基线。 |
+| [`search_pipeline/`](search_pipeline/) | 可部署的真实观测搜索入口、fixed-DM follow-up、PBS 提交和后端 benchmark。 |
+| [`injection_benchmark/`](injection_benchmark/) | DRAFTS 注入基准：raw8/packed2 生成、搜索、truth matching、汇总和 PRESTO 基线。 |
 | [`requirements.txt`](requirements.txt) | 通用 Python 依赖；CUDA 相关包需按运行机器单独匹配。 |
 
 每个工作流目录都有自己的 README，记录更细的参数、输入输出契约和运行注意事项。
@@ -121,7 +121,7 @@ python -m pip install -r requirements.txt
 ```
 
 PyTorch、torchvision 与 CuPy 应根据目标机器的 CUDA 驱动安装。生产搜索环境的补充依赖
-和版本提示见 [`runcode/requirements.txt`](runcode/requirements.txt)。
+和版本提示见 [`search_pipeline/requirements.txt`](search_pipeline/requirements.txt)。
 
 2026-07-27 在 `pg13` 实际验证的生产搜索环境如下；它是可复现基线，不是最低版本声明：
 
@@ -144,20 +144,20 @@ Ultralytics 8.4.50。每次正式搜索仍应把实际版本、GPU 和驱动随�
 | CenterNet ConvNeXt-Tiny detector v10 | `object_best_model_centernet_conv_tiny_ema_v10.pth` | `bcad4e710f5f1ccd3c8609d35a8d3fbfc36abd1d85bfefd035e945a573fb0629` |
 | ConvNeXt-Small binary classifier | `binary_best_model_conv_small_ema.pth` | `2055745aab76ddc16074516aa7b9aafdfaedf16df37ce8924389573eab27ffd8` |
 
-部署真实搜索时可直接下载到 `runcode/models/`：
+部署真实搜索时可直接下载到 `search_pipeline/models/`：
 
 ```bash
-mkdir -p runcode/models
+mkdir -p search_pipeline/models
 curl -L \
-  -o runcode/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
+  -o search_pipeline/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
   https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
 curl -L \
-  -o runcode/models/binary_best_model_conv_small_ema.pth \
+  -o search_pipeline/models/binary_best_model_conv_small_ema.pth \
   https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
 ```
 
-注入实验使用相同的两个文件，放置位置见
-[`injection_experiment/README.md`](injection_experiment/README.md)。
+注入基准使用相同的两个文件，放置位置见
+[`injection_benchmark/README.md`](injection_benchmark/README.md)。
 
 ## 模型训练
 
@@ -166,7 +166,7 @@ curl -L \
 批量入口：
 
 ```bash
-cd generate_burst
+cd dataset_generation
 RAW_DIR=/path/to/background_fits \
 GEN_ROOT=/path/to/generated_training_data \
 ./run_generation.sh
@@ -176,7 +176,7 @@ GEN_ROOT=/path/to/generated_training_data \
 FITS I/O。主要产物包括训练 H5、标注 JSON、配置、metadata JSONL 和 contact sheet。
 
 完整的注入模型、采样分布、分片合并和检查命令见
-[`generate_burst/README.md`](generate_burst/README.md)。
+[`dataset_generation/README.md`](dataset_generation/README.md)。
 
 ### CenterNet 检测器
 
@@ -189,7 +189,7 @@ EPOCHS=50 \
 ```
 
 当前训练线支持 CenterNet 与 ConvNeXt backbone。部署时把选定的 EMA checkpoint 复制到
-`runcode/models/`，并使用搜索入口所要求的文件名。训练参数、数据格式和评估方式见
+`search_pipeline/models/`，并使用搜索入口所要求的文件名。训练参数、数据格式和评估方式见
 [`object_detection/README.md`](object_detection/README.md)。
 
 ### ConvNeXt 二分类器
@@ -207,7 +207,7 @@ EPOCHS=50 \
 
 ## 真实数据搜索
 
-真实搜索代码位于 [`runcode/`](runcode/)，可按该目录边界独立部署到计算节点。
+真实搜索代码位于 [`search_pipeline/`](search_pipeline/)，可按该目录边界独立部署到计算节点。
 
 | 任务 | 入口 |
 |---|---|
@@ -220,7 +220,7 @@ EPOCHS=50 \
 通用盲搜示例：
 
 ```bash
-python runcode/t-blind-section.py \
+python search_pipeline/t-blind-section.py \
   --section 0 \
   --data-path /path/to/fast_observation \
   --output-root /path/to/drafts_search_output \
@@ -228,12 +228,12 @@ python runcode/t-blind-section.py \
   --beam M01
 ```
 
-搜索前需要把检测器和分类器权重放入 `runcode/models/`。完整命令、manifest 构建、
-输出目录规则、fixed-DM 用法和排错表见 [`runcode/README.md`](runcode/README.md)。
+搜索前需要把检测器和分类器权重放入 `search_pipeline/models/`。完整命令、manifest 构建、
+输出目录规则、fixed-DM 用法和排错表见 [`search_pipeline/README.md`](search_pipeline/README.md)。
 
-## 注入实验
+## 注入基准
 
-[`injection_experiment/`](injection_experiment/) 用于检验 DRAFTS 在受控注入信号上的
+[`injection_benchmark/`](injection_benchmark/) 用于检验 DRAFTS 在受控注入信号上的
 搜索表现，覆盖信号生成、raw8/packed2 搜索、真值匹配、批次汇总和 PRESTO 基线对照。
 
 主要入口：
@@ -242,22 +242,22 @@ python runcode/t-blind-section.py \
 |---|---|
 | `generate_injections.py` | 向真实背景注入模拟 FRB，生成 raw8，并可同步生成 packed2。 |
 | `run_campaign.py` | 调度生成、搜索、分析和聚合，支持 generate-only 与 search-only。 |
-| `launch_search.py` | 启动注入实验专用 DRAFTS 搜索 runtime。 |
+| `launch_search.py` | 启动注入基准专用 DRAFTS 搜索 runtime。 |
 | `evaluate_results.py` | 匹配 truth 与候选，计算召回、误报和参数分箱结果。 |
 | `aggregate_results.py` | 汇总多个 batch 的分析结果。 |
-| `search_runtime/` | 注入实验使用的精简搜索代码与权重占位说明。 |
+| `search_runtime/` | 注入基准使用的精简搜索代码与权重占位说明。 |
 | `presto_runtime/` | PRESTO blind-search 基线与阈值扫描代码。 |
 
 通用 search-only 示例：
 
 ```bash
-python injection_experiment/run_campaign.py \
+python injection_benchmark/run_campaign.py \
   --work-root /path/to/injection_runs \
   --run-label example_campaign \
   --batches 20 \
   --count-per-batch 500 \
   --search-only \
-  --runtime-dir injection_experiment/search_runtime \
+  --runtime-dir injection_benchmark/search_runtime \
   --gpu-num 8 \
   --gpu-ids 0,1,2,3,4,5,6,7 \
   --detector-type centernet_conv_tiny \
@@ -267,7 +267,7 @@ python injection_experiment/run_campaign.py \
 ```
 
 权重放置、raw8/packed2 并行搜索、truth matching 容差和 PRESTO 对照见
-[`injection_experiment/README.md`](injection_experiment/README.md)。
+[`injection_benchmark/README.md`](injection_benchmark/README.md)。
 
 ## 运行结果
 
@@ -275,7 +275,7 @@ python injection_experiment/run_campaign.py \
 
 - 模型训练输出 checkpoint、训练日志和验证指标；
 - 真实观测搜索输出候选清单、TOA/DM 估计和诊断图；
-- 注入实验输出 truth matching、召回率、误报率、定位误差和分箱统计。
+- 注入基准输出 truth matching、召回率、误报率、定位误差和分箱统计。
 
 建议每次运行使用独立的输出目录，并通过命令行参数或环境变量传入数据和结果位置。
 具体文件名与目录结构见各工作流 README。
@@ -286,11 +286,11 @@ python injection_experiment/run_campaign.py \
 
 ```bash
 python -m compileall -q \
-  generate_burst \
+  dataset_generation \
   object_detection \
   binary_classification \
-  runcode \
-  injection_experiment
+  search_pipeline \
+  injection_benchmark
 ```
 
 Shell 脚本可在 Linux 环境中使用 `bash -n path/to/script.sh` 做静态语法检查。

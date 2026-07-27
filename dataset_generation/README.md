@@ -11,7 +11,7 @@
 | `merge_shards.py` | 合并 shard H5，并同步生成合并后的 annotation/config/metadata/inspect 文件。 |
 | `inspect_dataset.py` | 快速检查 H5 内容，输出 JSON 摘要和 contact sheet。 |
 | `simulation_utils.py` | FRB 动态谱基本函数和 FAST 背景处理工具。物理参数采样在 `generate_dataset.py` 中完成。 |
-| `d-center-binary-core.py` | 生成器复用的 GPU 消色散核心；文件名有意与 `runcode` 保持一致。 |
+| `d-center-binary-core.py` | 生成器复用的 GPU 消色散核心；文件名有意与 `search_pipeline` 保持一致。 |
 | `rawdata/` | 背景 FITS 位置。大数据不随仓库保存，运行时用目录、软链接或 `RAW_DIR` 指定。 |
 | `shards_50000/` | 批量生成产物目录。属于可重算产物，不作为源码维护。 |
 
@@ -82,7 +82,7 @@ Git 只跟踪上述代码和 README；背景 FITS、shard、H5、缓存、日志
 ## 生成完整训练集
 
 ```bash
-cd DRAFTS/generate_burst
+cd DRAFTS/dataset_generation
 RAW_DIR=/path/to/rawdata \
 PY=/path/to/miniconda3/bin/python \
 SHARDS_PER_WAVE=4 \
@@ -114,7 +114,7 @@ SHARDS_PER_WAVE=4 \
 先用 dry-run 确认参数、输入文件和输出路径：
 
 ```bash
-cd DRAFTS/generate_burst
+cd DRAFTS/dataset_generation
 python generate_dataset.py \
   --rawdata-dir ./rawdata \
   --output ./test_multifit.h5 \
