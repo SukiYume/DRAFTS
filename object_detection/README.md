@@ -32,12 +32,11 @@ original_slice: (N,)
 image_index, left, top, width, height
 ```
 
-CenterNet 只预测中心 heatmap 与亚像素 offset；边框宽高用于生成中心监督和高斯半径，
-不会作为模型输出。`original_slice` 是生成阶段写入的原始 scene/slice 标识。加载器先
-按 `(H5 绝对路径, original_slice)` 分组，再把完整组分到 train 或 validation；同一
-scene 的 mosaic/crop 帧不会跨集合。只有完成分组拆分后的 train 行才按目标数量和小目标
-存在情况过采样，validation 始终保持原始分布。缺少 `original_slice` 时加载器会直接
-报错，避免退回可能泄漏的逐帧随机拆分。
+CenterNet 输出中心 heatmap 与亚像素 offset；边框宽高用于生成中心监督和高斯半径。
+`original_slice` 是生成阶段写入的原始 scene/slice 标识。加载器按
+`(H5 绝对路径, original_slice)` 分组，再把完整组分到 train 或 validation，使同一
+scene 的 mosaic/crop 帧位于同一集合。训练集按目标数量和小目标存在情况过采样，
+validation 保持原始分布；数据集需要提供 `original_slice`。
 
 训练数据可由 [`../dataset_generation/`](../dataset_generation/) 生成。
 
@@ -119,9 +118,8 @@ python centernet_infer.py \
   --end 30
 ```
 
-权重和 `--backbone` 必须一致。推理图用于检查中心偏移、漏检和重复候选，不能替代完整
-validation 指标。评估时，每个预测会与容差内“尚未使用且距离最近”的真值匹配；不会
-因为最近真值已被占用，就漏掉同样合法的次近真值。
+权重和 `--backbone` 必须一致。推理图用于检查中心偏移、漏检和重复候选，完整
+validation 提供汇总指标。评估时，每个预测与容差内尚未使用且距离最近的真值匹配。
 
 ## 部署到 DRAFTS
 

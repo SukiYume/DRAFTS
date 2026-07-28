@@ -864,10 +864,23 @@ def prepare_packed2_output_dir(output_root: Path, run_label: str, overwrite: boo
 
 
 def copy_existing_manifests(raw8_dir: Path, packed2_dir: Path) -> None:
-    for name in ("run_config.json", "truth_manifest.jsonl"):
-        source = raw8_dir / name
-        if source.exists():
-            shutil.copyfile(source, packed2_dir / name)
+    config_path = raw8_dir / "run_config.json"
+    truth_path = raw8_dir / "truth_manifest.jsonl"
+    if not config_path.exists() or not truth_path.exists():
+        raise FileNotFoundError(f"Missing raw8 manifests under {raw8_dir}")
+
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["quantization"] = "packed2"
+    config["derived_from_raw8_dir"] = raw8_dir.name
+    write_json(packed2_dir / "run_config.json", config)
+
+    rows = []
+    for line in truth_path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            row = json.loads(line)
+            row["quantization"] = "packed2"
+            rows.append(row)
+    write_jsonl(packed2_dir / "truth_manifest.jsonl", rows)
 
 
 def process_file_job_unlocked(job: dict) -> dict:

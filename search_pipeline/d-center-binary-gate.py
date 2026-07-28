@@ -250,7 +250,7 @@ if __name__ == '__main__':
         dm_threshold = 10,          # 低于该 DM 直接丢弃（视为 RFI）
         block_size   = 4096,        # 每个时间切片的样本数（降采样后）
         dm_span      = 1024,        # 每张 512x512 检测图覆盖的原始 DM 点数
-        det_prob     = 0.40,        # 中心检测置信度阈值
+        det_prob     = 0.45,        # 中心检测置信度阈值
         section_num  = 32,          # 与 PBS submission 展开后的总 section 数一致（= GPU 数 x workers_per_gpu）
         time_factor  = 8,           # 控制 down_time_rate
     )
@@ -323,6 +323,7 @@ if __name__ == '__main__':
         print()
 
     # ---- 主循环 ----
+    failures = []
     for identifier, fits_list, info in section_file_lists:
         if identifier in completed_tasks:
             print(f'Skipping completed task: {identifier}')
@@ -349,3 +350,10 @@ if __name__ == '__main__':
             print(f'Error processing {identifier}: {exc}')
             import traceback
             traceback.print_exc()
+            failures.append((identifier, str(exc)))
+
+    if failures:
+        print(f'Failed tasks: {len(failures)}', file=sys.stderr)
+        for identifier, reason in failures:
+            print(f'  {identifier}: {reason}', file=sys.stderr)
+        sys.exit(1)

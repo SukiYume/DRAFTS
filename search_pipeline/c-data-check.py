@@ -13,9 +13,9 @@ import numpy as np
 from astropy.io import fits
 
 import matplotlib.pyplot as plt
+import seaborn  # noqa: F401 - registers the 'mako' colormap
 from multiprocessing import Pool
 from functools import partial
-import seaborn as sns
 
 
 def process_group(file_paths, start_mjd, down_time_rate=64):

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 全部路径以脚本所在目录为根，自包含。把整个 gendata 目录拷到哪都能直接跑：
-#   gendata/ 下需有：本脚本、generate_dataset.py、merge_shards.py、
+# 全部路径以脚本所在目录为根。复制 dataset_generation 目录即可运行：
+#   dataset_generation/ 下需有：本脚本、generate_dataset.py、merge_shards.py、
 #                    inspect_dataset.py、simulation_utils.py、d-center-binary-core.py、
-#                    rawdata/（背景 FITS）。中间产物/输出也都写在 gendata 下。
+#                    rawdata/（背景 FITS）。中间产物和输出写在 dataset_generation 下。
 # 需要时可用环境变量覆盖任意一项（如 GEN_ROOT=/somewhere RAW_DIR=... PY=python3）。
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GEN_ROOT="${GEN_ROOT:-${SCRIPT_DIR}}"

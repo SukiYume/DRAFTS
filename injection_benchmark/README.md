@@ -31,15 +31,14 @@ generate_injections.py
 | `truth_archive/` | 每个 batch/量化版本的 `truth_manifest.jsonl` 和 `run_config.json`，供 DL 和 PRESTO 共用。 |
 | `runs/` | DL 搜索、分析、汇总和日志目录；大体积注入 FITS 与其分开保存。 |
 
-Git 只跟踪源码、README 和权重清单。`simdata/`、`truth_archive/`、`runs/`、结果目录，
-以及本地论文/笔记目录均由 `.gitignore` 排除，不属于可提交的实验代码。
+Git 跟踪源码、README 和权重清单。`simdata/`、`truth_archive/`、`runs/`、结果目录，
+以及本地论文/笔记目录由 `.gitignore` 排除。
 
-`search_runtime/` 与 `search_pipeline/` 共享搜索模型实现，但不是整目录逐字镜像：
-`binary_model.py`、`centernet_model.py` 和 `centernet_eval.py` 应保持逐文件一致；
-`d-center-binary-core.py`、`d-center-binary-gate.py` 与 `t-blind-section.py` 则保留
-注入评估需要的候选/proposal manifest、重叠 DM window、classifier time
-downsample 和物理 TOA-DM 去重接口。同步生产搜索改动时应逐项移植并重新执行
-campaign dry-run，不能直接用 `search_pipeline/` 覆盖整个目录。
+`search_runtime/` 与 `search_pipeline/` 共享搜索模型实现。
+`binary_model.py`、`centernet_model.py` 和 `centernet_eval.py` 保持逐文件一致；
+`d-center-binary-core.py`、`d-center-binary-gate.py` 与 `t-blind-section.py` 保留
+注入评估所需的候选/proposal manifest、重叠 DM window、classifier time
+downsample 和物理 TOA-DM 去重接口。同步生产搜索改动后运行 campaign dry-run。
 
 ## 注入信号模型
 
@@ -72,16 +71,16 @@ campaign dry-run，不能直接用 `search_pipeline/` 覆盖整个目录。
 | `center_freq_mhz` | 观测频带 `[freq_min, freq_max]` | 在生成 truth 行时均匀分布。 |
 | `highest_freq_toa_global_raw_sample` | `inject_file_first..inject_file_last` 覆盖的样本窗口 | 合法窗口内均匀抽样；每个注入保留至少 `0.24 s` 间隔，并使用 `0.18 s` 或模型支持宽度作为边界 guard。 |
 
-TOA 放置最多尝试 1024 次。若给定窗口、注入数量、边界 guard 和最小间距无法同时满足，
-`generate_injections.py` 会抛出 `ValueError` 并终止该批生成；不会返回违反间距约束的“尽力而为”
-样本。此时应扩大注入文件范围、减少底层 `--count`（campaign 入口为
+TOA 放置最多尝试 1024 次。给定窗口、注入数量、边界 guard 和最小间距需要同时满足；
+否则 `generate_injections.py` 抛出 `ValueError` 并终止该批生成。可扩大注入文件范围、
+减少底层 `--count`（campaign 入口为
 `--count-per-batch`），或显式调整间距参数。
 
 每个 raw8/packed2 输出目录都会写 `run_config.json` 和 `truth_manifest.jsonl`。`run_config.json` 记录参数范围和分布，`truth_manifest.jsonl` 记录每个注入源的实际 DM、S/N、宽度、带宽、中心频率、散射、TOA 和 per-channel 幅度。
 
 ## 权重和 runtime
 
-搜索脚本不会自动读取训练日志目录。运行前把需要评估的 `.pth` 放到 `search_runtime/models/`，并在命令行显式指定：
+把需要评估的 `.pth` 放到 `search_runtime/models/`，并在命令行显式指定：
 
 - `--detector-type centernet_conv_tiny`
 - `--detector-ckpt models/<detector-weight>.pth`
@@ -191,14 +190,14 @@ python aggregate_results.py \
 
 DL 与 PRESTO 的候选先按时间/DM 容差形成事件，但事件内任意两成员都必须满足整体直径
 限制，避免单链式 `A≈B≈C` 把相距过远的 A/C 桥接成一个事件。truth-event 分配随后在
-所有合法边上做“最大匹配数优先、总归一化距离最小”的一对一全局匹配，不使用依赖输入
-顺序的逐 truth 贪心。这样不会因为某个 truth 抢先占用共享近邻而丢掉本来可达到的召回。
+所有合法边上做“最大匹配数优先、总归一化距离最小”的一对一全局匹配，使结果独立于
+truth 输入顺序，并保留可达到的最大召回。
 
 ## 运行注意事项
 
-- 默认根目录环境变量为 `INJECTION_BENCHMARK_ROOT`；为兼容已有远端任务，
-  `INJECTION_EXPERIMENT_ROOT` 仍作为后备名称。`INJECTION_WORK_ROOT`、
-  `INJECTION_SIM_ROOT` 和 `INJECTION_TRUTH_ROOT` 的优先级更高。
+- 默认根目录环境变量为 `INJECTION_BENCHMARK_ROOT`。`INJECTION_WORK_ROOT`、
+  `INJECTION_SIM_ROOT` 和 `INJECTION_TRUTH_ROOT` 可分别覆盖运行、注入数据和 truth
+  目录。
 - 注入 FITS 体积很大。只有需要复用同一批注入数据做模型对比时才使用 `--keep-injected-fits`。
 - `--search-only` 依赖 `simdata/` 和 `truth_archive/` 中已有的注入数据；换 `--run-label` 前先确认对应 campaign 已生成。
 - `--overwrite-search` 只用于替换搜索、分析和汇总产物；它不负责重新生成注入 truth。

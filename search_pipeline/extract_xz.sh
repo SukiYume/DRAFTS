@@ -82,14 +82,27 @@ n_files="${#xz_files[@]}"
 echo "[INFO] found $n_files xz file(s); dest=$destination_folder concurrency=$concurrent_tasks"
 
 # ─── 并发解压 ───
+status=0
 for ((i = 0; i < n_files; i += concurrent_tasks)); do
   end=$((i + concurrent_tasks))
+  pids=()
+  labels=()
 
   for ((j = i; j < end && j < n_files; j++)); do
     extract_one "${xz_files[j]}" &
+    pids+=("$!")
+    labels+=("${xz_files[j]}")
   done
 
-  wait
+  for idx in "${!pids[@]}"; do
+    if ! wait "${pids[$idx]}"; then
+      echo "[FAIL] ${labels[$idx]}" >&2
+      status=1
+    fi
+  done
 done
 
+if ((status != 0)); then
+  exit 1
+fi
 echo "[DONE] extracted $n_files xz file(s) to $destination_folder"

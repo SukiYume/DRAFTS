@@ -37,7 +37,6 @@ HERE = Path(__file__).resolve().parent
 DEFAULT_BACKGROUND_DIR = Path("/path/to/generation_data/rawdata")
 DEFAULT_BASE_ROOT = Path(
     os.environ.get("INJECTION_BENCHMARK_ROOT")
-    or os.environ.get("INJECTION_EXPERIMENT_ROOT")
     or str(HERE)
 )
 DEFAULT_WORK_ROOT = Path(os.environ.get("INJECTION_WORK_ROOT", str(DEFAULT_BASE_ROOT / "runs")))

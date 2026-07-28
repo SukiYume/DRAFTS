@@ -10,7 +10,7 @@ Example, production-like CRAFTS parameters on one local section:
         --output-root /path/to/drafts_runs/blind \
         --beam M01 \
         --dm-range 4096 --dm-scale 1 --dm-offset 0 \
-        --dm-threshold 10 --block-size 4096 --dm-span 1024 --det-prob 0.40
+        --dm-threshold 10 --block-size 4096 --dm-span 1024 --det-prob 0.45
 """
 
 import argparse

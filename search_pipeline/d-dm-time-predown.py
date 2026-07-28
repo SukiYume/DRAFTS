@@ -121,7 +121,7 @@ def plot_burst(data, filename, block, time_reso, fits_number, block_size, save_p
     time_start = ((fits_number - 1) * file_leng // down_sampling_rate + block * block_size) * time_reso
     peak_time  = time_start + peak_idx * time_reso
 
-    fig = plt.figure(figsize=(5, 5))
+    plt.figure(figsize=(5, 5))
     gs  = gridspec.GridSpec(4, 1)
     plt.subplots_adjust(wspace=0, hspace=0)
     plt.subplot(gs[0, 0])

@@ -64,7 +64,6 @@ from search_utils import (
 DEFAULT_RUN_LABEL = "v10_det03_injection_10000"
 DEFAULT_BASE_ROOT = Path(
     os.environ.get("INJECTION_BENCHMARK_ROOT")
-    or os.environ.get("INJECTION_EXPERIMENT_ROOT")
     or "/path/to/drafts_runs/injection_benchmark"
 )
 DEFAULT_SIM_ROOT = DEFAULT_BASE_ROOT / "simdata"

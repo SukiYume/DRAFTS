@@ -349,7 +349,7 @@ if __name__ == '__main__':
     #         'dm_threshold': 10,
     #         'block_size': 4096,
     #         'dm_span': 1024,
-    #         'det_prob': 0.40,
+    #         'det_prob': 0.45,
     #         'section_num': sum(node_config.values()) * workers_per_gpu,
     #         'time_factor': 8,
     #     },

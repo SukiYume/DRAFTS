@@ -12,7 +12,7 @@ Example, production-like CRAFTS detector settings:
         --data-path /path/to/observations/source/date \
         --output-root /path/to/drafts_runs/object_backend \
         --dm-range 4096 --dm-scale 1 --dm-offset 0 \
-        --dm-threshold 10 --block-size 4096 --detect-dm-span 1024 --det-prob 0.40
+        --dm-threshold 10 --block-size 4096 --detect-dm-span 1024 --det-prob 0.45
 """
 
 import argparse

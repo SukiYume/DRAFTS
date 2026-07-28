@@ -133,21 +133,18 @@ source/date2/*.fits
 1001.2–1079.3 MHz 与 1100.1–1494.3 MHz。二分类 cutout 仍使用 full-frequency
 数据。
 
-因此，其他望远镜、其他接收机频段、倒置频率轴，或物理坏频段不同的数据都不能只改
-FITS 路径后直接视为已验证。应先按目标观测修改
+用于其他望远镜、接收机频段、频率轴方向或坏频段配置时，先按目标观测修改
 `d-center-binary-core.py::_build_dedispersion_cache()` 的 `index_array`，再用已知
 脉冲和注入基准验证召回、DM/TOA 误差；`NCHAN` 还必须能整除到 512 通道。
 
 ### 损坏 FITS 的连续搜索策略
 
-`d-center-binary-gate.py` 的盲搜策略是按文件容错：某个 FITS 读取失败时，把异常写到
-与 completed log 同名前缀的 `*_bad_fits.log`，只用相同 shape 的随机噪声替换该文件，
-然后继续读取和搜索后续 FITS，不会因替换动作提前结束任务。只有
-`process_fits_list()` 遍历完成后，gate 才把整个 section 写入 completed log。
+`d-center-binary-gate.py` 按文件容错：某个 FITS 读取失败时，把异常写到与 completed
+log 同名前缀的 `*_bad_fits.log`，以相同 shape 的随机噪声替换该文件，并继续搜索后续
+FITS。`process_fits_list()` 遍历完成后，gate 将整个 section 写入 completed log。
 
-随机替换会使涉及该文件的窗口没有真实观测内容，但可以避免一次坏文件阻断后续文件。
-正式结果必须同时归档并检查 `*_bad_fits.log`；修复原 FITS 后若需要补回这段观测，应
-清理该 section 的完成记录及对应输出后重跑。
+随机替换覆盖的窗口不含真实观测内容。归档结果时一并检查 `*_bad_fits.log`；修复原
+FITS 后，可清理该 section 的完成记录及对应输出并重跑。
 
 ## 未知 DM 盲搜
 
@@ -169,7 +166,7 @@ CUDA_VISIBLE_DEVICES=0 python t-blind-section.py \
   --dm-threshold 10 \
   --block-size 4096 \
   --dm-span 1024 \
-  --det-prob 0.40
+  --det-prob 0.45
 ```
 
 常用参数：
@@ -183,7 +180,7 @@ CUDA_VISIBLE_DEVICES=0 python t-blind-section.py \
 | `--dm-threshold` | 50.0 | 低于该 DM 的候选丢弃；仓库内 gate 模板显式设为 10。 |
 | `--block-size` | 8192 | 每个时间块的降采样后样本数；仓库内 gate 模板显式设为 4096。 |
 | `--dm-span` | 1024 | 每张检测图覆盖的 DM 点数。 |
-| `--det-prob` | 0.45 | CenterNet 候选阈值；仓库内 gate 模板显式设为 0.40。 |
+| `--det-prob` | 0.45 | CenterNet 候选阈值。 |
 | `--time-factor` | 8.0 | FITS 时间降采样率。 |
 
 多 GPU 可以分别提交 `--section 0..gpu_num-1`，或使用 `t-blind-batch.sh`。`--gpu-num` 在这里表示总 section 数，不一定等于物理 GPU 数。
@@ -194,12 +191,11 @@ CUDA_VISIBLE_DEVICES=0 python t-blind-section.py \
 ROOT=/path/to/drafts_runs/data_searching \
 OUTPUT_ROOT=/path/to/drafts_runs/blind \
 BEAM=all GPU_NUM=8 \
-DM_THRESHOLD=10 BLOCK_SIZE=4096 DM_SPAN=1024 DET_PROB=0.40 \
+DM_THRESHOLD=10 BLOCK_SIZE=4096 DM_SPAN=1024 DET_PROB=0.45 \
   bash t-blind-batch.sh /path/to/fast_observation/
 ```
 
-在由 PBS 管理的 gate 节点上，不要直接启动 `t-blind-batch.sh`；应使用
-`s-pbsspt.py` 生成并提交作业。
+由 PBS 管理的节点使用 `s-pbsspt.py` 生成并提交作业。
 
 ### 固定配置 gate
 
@@ -213,7 +209,7 @@ process_config = ProcessConfig(
     dm_threshold=10,
     block_size=4096,
     dm_span=1024,
-    det_prob=0.40,
+    det_prob=0.45,
     section_num=32,
     time_factor=8,
 )
@@ -246,7 +242,8 @@ JSON；更换数据集时应重新生成，避免继续使用旧任务清单。
 CUDA_VISIBLE_DEVICES=0 python d-center-binary-gate.py 0
 ```
 
-`processing_log_zd202x_1_1_2bit.txt` 记录已完成 identifier。重跑全集前删除对应日志：
+`processing_log_zd202x_1_1_2bit.txt` 每行记录一个已完成 identifier。重跑全集时删除
+对应日志：
 
 ```bash
 rm -f processing_log_zd202x_1_1_2bit.txt
@@ -306,7 +303,7 @@ python c-manifest-summary.py \
 cut_toa_sec = (signal_mjd - obs_start_mjd) * 86400.0
 ```
 
-正式运行应写到仓库之外的独立运行目录，不要把搜索输出混入代码目录。
+正式运行使用仓库之外的独立运行目录保存搜索输出。
 
 ## Fixed-DM Follow-up
 
@@ -414,7 +411,7 @@ CUDA_VISIBLE_DEVICES=0 python t-object-bench.py \
   --dm-threshold 10 \
   --block-size 4096 \
   --detect-dm-span 1024 \
-  --det-prob 0.40
+  --det-prob 0.45
 ```
 
 多组合矩阵：
@@ -434,16 +431,16 @@ bash t-binary-bench.sh
 bash t-binary-bench.sh --summarize-only
 ```
 
-`t-binary-bench.sh` 是开发用模板，不是开箱即用的生产入口。实际运行前需要编辑脚本
-底部的观测路径和 DM，并准备以下两份与 backbone 匹配的权重：
+`t-binary-bench.sh` 是开发用模板。运行前配置脚本底部的观测路径和 DM，并准备以下
+两份与 backbone 匹配的权重：
 
 ```text
 models/binary_best_model_conv_tiny_ema.pth
 models/binary_best_model_conv_small_ema.pth
 ```
 
-公开的默认部署权重只包含 ConvNeXt-Small；ConvNeXt-Tiny benchmark 需要使用自行训练
-或另行取得的兼容 checkpoint。如果只比较 Small，应删除或注释脚本中的 Tiny 任务。
+默认部署提供 ConvNeXt-Small 权重；ConvNeXt-Tiny benchmark 使用自行训练或另行取得的
+兼容 checkpoint。仅比较 Small 时，可删除或注释脚本中的 Tiny 任务。
 benchmark 结果依赖存储、进程并发、FITS 数据布局和 GPU，报告时应同时记录这些条件。
 
 ## 排错
@@ -455,7 +452,7 @@ benchmark 结果依赖存储、进程并发、FITS 数据布局和 GPU，报告�
 | detector 权重加载失败 | 检查 detector 类型、backbone 和 checkpoint 是否对应。 |
 | classifier 权重加载失败 | 检查 `convnext_tiny` / `convnext_small` 是否与权重一致。 |
 | 找不到 FITS | 检查 `data_path`、文件名中的 `-Mxx_`、`beam_filter` / `--beam`。 |
-| 所有任务都跳过 | 删除对应 `processing_log*.txt`。 |
+| 所有任务都跳过 | 检查对应 `processing_log*.txt`；需要重跑时清理对应记录。 |
 | CUDA OOM | 减小 `dm_range` 或 `block_size`，或降低同一 GPU 上并发进程数。 |
 | 输出目录混有旧结果 | 换新的输出目录，或清理目标目录后重跑。 |
 | `import cupy` 失败 | 安装与节点 CUDA toolkit 匹配的 CuPy 构建。 |

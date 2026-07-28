@@ -4,7 +4,7 @@
 # Example, production-like CRAFTS search parameters:
 #   ROOT=/path/to/drafts_runs/data_searching \
 #   OUTPUT_ROOT=/path/to/drafts_runs/blind \
-#   BEAM=all GPU_NUM=8 DM_THRESHOLD=10 BLOCK_SIZE=4096 DM_SPAN=1024 DET_PROB=0.40 \
+#   BEAM=all GPU_NUM=8 DM_THRESHOLD=10 BLOCK_SIZE=4096 DM_SPAN=1024 DET_PROB=0.45 \
 #     bash t-blind-batch.sh /path/to/observations/source/date
 #
 # This direct launcher is for interactive compute nodes. On PBS-managed nodes,
@@ -75,6 +75,8 @@ if torch.cuda.is_available():
     print(f"[Launch] gpu0={torch.cuda.get_device_name(0)}", flush=True)
 PY
 
+pids=()
+labels=()
 for data_path in "${DATASETS[@]}"; do
   dataset_label="$(basename "$(dirname "$data_path")")_$(basename "$data_path")"
   for ((gpu = 0; gpu < GPU_NUM; gpu++)); do
@@ -98,8 +100,23 @@ for data_path in "${DATASETS[@]}"; do
       --det-prob "$DET_PROB" \
       --time-factor "$TIME_FACTOR" \
       >"$log_file" 2>&1 &
+    pids+=("$!")
+    labels+=("${dataset_label}_gpu${gpu}")
   done
 done
 
-wait
+status=0
+for idx in "${!pids[@]}"; do
+  if wait "${pids[$idx]}"; then
+    echo "[Done] ${labels[$idx]}"
+  else
+    rc=$?
+    echo "[Fail] ${labels[$idx]} exit=$rc" >&2
+    status=1
+  fi
+done
+
+if ((status != 0)); then
+  exit 1
+fi
 echo "[Done] all jobs completed"

@@ -15,8 +15,8 @@
 | `rawdata/` | 背景 FITS 位置。大数据不随仓库保存，运行时用目录、软链接或 `RAW_DIR` 指定。 |
 | `shards_50000/` | 批量生成产物目录。属于可重算产物，不作为源码维护。 |
 
-Git 只跟踪上述代码和 README；背景 FITS、shard、H5、缓存、日志和检查图均由
-`.gitignore` 排除，不属于可提交的生成器源码。
+Git 跟踪上述代码和 README；背景 FITS、shard、H5、缓存、日志和检查图由
+`.gitignore` 排除。
 
 ## 当前生成配置
 
@@ -106,8 +106,8 @@ SHARDS_PER_WAVE=4 \
 | `shards_50000/shard_*.h5` / `shard_*.log` | 合并前的 shard 数据和各 shard 运行日志。 |
 
 生成完成后，把 H5 复制到 `../object_detection/Data/`，再进入
-`../object_detection/` 训练检测器。训练代码直接读取 H5 内的 `annotations`；
-外部 `_annotations.json` 只用于独立检查，不是训练必需文件。
+`../object_detection/` 训练检测器。训练代码读取 H5 内的 `annotations`，外部
+`_annotations.json` 用于独立检查。
 
 ## 小规模检查
 

@@ -190,11 +190,7 @@ def load_fits_file(file_name, reverse_flag=False):
 def load_2bit_fits_file(file_name):
     with fits.open(file_name) as f:
         h = f[1].header
-        try:
-            data = f[1].data['DATA']
-        except Exception:
-            data = np.random.randint(0, 3,
-                (h['NAXIS2'], h['NSBLK'] // 4, h['NPOL'], h['NCHAN'], 1), dtype=np.uint8)
+        data = f[1].data['DATA']
     data = np.unpackbits(data.reshape(h['NAXIS2'], -1), axis=1).reshape(h['NAXIS2'], -1, 2)
     data = data[..., 0] << 1 | data[..., 1]
     data = data.reshape(h['NAXIS2'] * h['NSBLK'], h['NCHAN']).astype(np.float32, copy=False)
@@ -555,6 +551,7 @@ def process_fits_list(fits_list, save_path, model, class_model, process_config, 
         return
 
     fits_list  = list(fits_list)
+    input_file_count = len(fits_list)
     block_size = process_config.block_size
     os.makedirs(save_path, exist_ok=True)
     candidate_manifest = str(getattr(process_config, 'candidate_manifest', '') or '')
@@ -606,7 +603,7 @@ def process_fits_list(fits_list, save_path, model, class_model, process_config, 
     load_func  = load_2bit_fits_file if nbits == 2 else load_fits_file
 
     # n_search_files 之后的文件只作消色散读取提前量，不再为其启动检索 block
-    search_limit = len(fits_list) if n_search_files is None else min(n_search_files, len(fits_list))
+    search_limit = input_file_count if n_search_files is None else min(n_search_files, input_file_count)
 
     for i in range(0, search_limit, block_file):
         filename = os.path.splitext(os.path.basename(fits_list[i]))[0]
@@ -620,7 +617,16 @@ def process_fits_list(fits_list, save_path, model, class_model, process_config, 
                 del file_cache[fp]
         for fp in needed:
             if fp not in file_cache:
-                file_cache[fp] = load_func(fp)
+                try:
+                    file_cache[fp] = load_func(fp)
+                except (OSError, ValueError, KeyError, IndexError, TypeError) as exc:
+                    print(f"[Bad FITS] {fp}: {exc}; using random replacement", flush=True)
+                    file_cache[fp] = np.random.default_rng().random(
+                        (file_leng // down_time_rate, freq_reso), dtype=np.float32,
+                    )
+                    file_cache[fp] -= 0.5
+                    file_cache[fp] *= np.sqrt(15.0 / down_time_rate)
+                    file_cache[fp] += 1.5
         raw_data = np.concatenate([file_cache[fp] for fp in needed], axis=0)
 
         if raw_data.shape[0] < comb_file_leng:

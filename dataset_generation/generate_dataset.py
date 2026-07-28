@@ -32,7 +32,7 @@ except ImportError:  # Remote generation can still run with the centered physica
     ndi = None
 
 
-# 默认路径全部相对脚本所在目录（gendata）——本套件自包含，不依赖外部绝对路径。
+# 默认路径全部相对脚本所在目录（dataset_generation）。
 # 需要的代码文件（simulation_utils.py、d-center-binary-core.py）和数据（rawdata/、channel_std 缓存）
 # 都放在脚本同目录或其子目录下即可。命令行仍可覆盖。
 _HERE = Path(__file__).resolve().parent      # 自包含：代码 + 数据都在脚本同目录或其子目录

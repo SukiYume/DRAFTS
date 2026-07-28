@@ -100,12 +100,17 @@ def detect_quantization(path: Path, row: dict, prefix: str = "") -> str:
     """判断该行属于 raw8 还是 packed2：优先看字段值，否则从路径名兜底。"""
     key = f"{prefix}quantization" if prefix else "quantization"
     value = str(row.get(key, "")).strip()
+    text = str(path).lower()
+    inferred = "packed2" if "packed2" in text else "raw8" if "raw8" in text else ""
     if value in QUANTIZATIONS:
+        if inferred and value != inferred:
+            raise ValueError(
+                f"quantization mismatch: field={value}, path={inferred}, file={path}"
+            )
         return value
-    text = str(path)
-    if "packed2" in text:
-        return "packed2"
-    return "raw8"
+    if inferred:
+        return inferred
+    raise ValueError(f"Unable to determine quantization for {path}")
 
 
 def load_campaign_tables(analysis_root: Path) -> tuple[list[dict], list[dict]]:
