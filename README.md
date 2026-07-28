@@ -6,6 +6,8 @@
 
 面向快速射电暴与单脉冲的深度学习搜索流水线
 
+[![DRAFTS](https://img.shields.io/badge/Transient%20Search-DRAFTS-da282a)](https://github.com/SukiYume/DRAFTS)
+[![GitHub Stars](https://img.shields.io/github/stars/SukiYume/DRAFTS.svg?label=Stars&logo=github)](https://github.com/SukiYume/DRAFTS/stargazers)
 [![arXiv](https://img.shields.io/badge/arXiv-2410.03200-b31b1b.svg)](https://arxiv.org/abs/2410.03200)
 [![Python](https://img.shields.io/badge/Python-3-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
