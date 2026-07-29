@@ -2,8 +2,10 @@
 
 本目录训练 DRAFTS 搜索链路的第一阶段模型：从 512 × 512 time–DM 图中定位暂现源
 候选中心，并将中心坐标转换为候选 TOA 与 DM。当前默认部署模型使用
-CenterNet + ConvNeXt-Tiny。权重可以从任意兼容的模型仓库提供；以下示例通过
-`DRAFTS_MODEL_BASE_URL` 指定基础地址。
+CenterNet + ConvNeXt-Tiny。
+
+第一次使用 DRAFTS 时，先按[仓库根 README](../README.md#快速开始)安装通用依赖。
+本文只说明检测器数据格式、训练、验证和部署。
 
 ## 目录职责
 
@@ -40,15 +42,11 @@ validation 保持原始分布；数据集需要提供 `original_slice`。
 
 训练数据可由 [`../dataset_generation/`](../dataset_generation/) 生成。
 
-## 安装
+## 运行环境
 
-从仓库根目录安装通用依赖：
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-PyTorch、torchvision 和 CUDA 版本需要与训练节点匹配。
+使用仓库根 README 创建的环境。训练需要与目标 CUDA 平台匹配的 PyTorch 和
+torchvision；从仓库根目录运行命令时，训练 H5 可放在任意路径并通过
+`DATA_PATH` 或 `--data-path` 指定。
 
 ## 训练
 
@@ -100,10 +98,9 @@ args.json
 先下载当前默认检测器：
 
 ```bash
-: "${DRAFTS_MODEL_BASE_URL:?请设置模型仓库基础地址}"
-curl -L \
+curl -fL \
   -o /path/to/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
-  "${DRAFTS_MODEL_BASE_URL%/}/object_best_model_centernet_conv_tiny_ema_v10.pth"
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
 ```
 
 然后抽查 validation 图：

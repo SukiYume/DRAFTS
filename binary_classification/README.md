@@ -2,8 +2,10 @@
 
 本目录训练 DRAFTS 搜索链路的第二阶段模型：CenterNet 给出候选位置后，
 ConvNeXt 二分类器判断候选是否更像真实 burst。默认部署模型是
-`convnext_small`。权重可以从任意兼容的模型仓库提供；以下示例通过
-`DRAFTS_MODEL_BASE_URL` 指定基础地址。
+`convnext_small`。
+
+第一次使用 DRAFTS 时，先按[仓库根 README](../README.md#快速开始)安装通用依赖。
+本文只说明二分类数据格式、训练、推理和部署。
 
 ## 目录职责
 
@@ -43,15 +45,10 @@ False_FRB20240114A.h5
 代码先按标签分层切分 train/validation，再仅对训练集过采样，避免同一样本同时出现在
 两侧。训练增强包括 max-mixup、随机拼图、旋转、翻转和合成干扰。
 
-## 安装
+## 运行环境
 
-从仓库根目录安装通用依赖：
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-PyTorch 和 torchvision 应使用与目标 GPU/CUDA 环境匹配的版本。
+使用仓库根 README 创建的环境。训练需要与目标 CUDA 平台匹配的 PyTorch 和
+torchvision；数据路径通过 `DATA_PATH` 或 `--data-path` 指定。
 
 ## 训练
 
@@ -102,10 +99,9 @@ logs.json
 先下载当前默认分类器：
 
 ```bash
-: "${DRAFTS_MODEL_BASE_URL:?请设置模型仓库基础地址}"
-curl -L \
+curl -fL \
   -o /path/to/models/binary_best_model_conv_small_ema.pth \
-  "${DRAFTS_MODEL_BASE_URL%/}/binary_best_model_conv_small_ema.pth"
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
 ```
 
 然后运行：

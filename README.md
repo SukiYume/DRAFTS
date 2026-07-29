@@ -7,9 +7,9 @@
 面向快速射电暴与单脉冲的深度学习搜索流水线
 
 [![DRAFTS](https://img.shields.io/badge/Transient%20Search-DRAFTS-da282a)](https://github.com/SukiYume/DRAFTS)
-[![GitHub Stars](https://img.shields.io/github/stars/SukiYume/DRAFTS.svg?label=Stars&logo=github)](https://github.com/SukiYume/DRAFTS/stargazers)
+[![GitHub Stars](https://img.shields.io/github/stars/SukiYume/DRAFTS.svg?label=Stars&logo=github)](https://github.com/SukiYume/DRAFTS)
 [![arXiv](https://img.shields.io/badge/arXiv-2410.03200-b31b1b.svg)](https://arxiv.org/abs/2410.03200)
-[![Python](https://img.shields.io/badge/Python-3-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Related](https://img.shields.io/badge/Post--search-AFTER-1f6feb)](https://github.com/SukiYume/AFTER)
 
@@ -39,8 +39,8 @@ DRAFTS 的核心由三部分组成：
    色散量（DM）；
 3. **二分类复核**：使用 ConvNeXt 系列分类器过滤伪候选，减少人工检查负担。
 
-当前仓库不仅保存论文版本的核心思想，还维护正在使用的训练数据生成、CenterNet
-训练、ConvNeXt 分类器训练、真实 FAST 观测搜索，以及 raw8/packed2 注入评估代码。
+仓库包含当前使用的训练数据生成、CenterNet 训练、ConvNeXt 分类器训练、真实 FAST
+观测搜索，以及 raw8/packed2 注入评估工作流。
 
 > 论文与算法背景：
 > [DRAFTS: A Deep Learning-Based Radio Fast Transient Search Pipeline](https://arxiv.org/abs/2410.03200)
@@ -97,6 +97,18 @@ flowchart LR
 
 ## 快速开始
 
+### 前置条件
+
+- [Git](https://git-scm.com/downloads)；
+- 带 `venv` 和 `pip` 的 64 位 [Python 3.10+](https://www.python.org/downloads/)；
+- 运行训练数据生成、模型训练或真实搜索时，需要 NVIDIA GPU 以及互相兼容的驱动、
+  CUDA、PyTorch 和 CuPy；
+- 足够存放原始 FITS、训练 H5 和搜索结果的本地或共享存储。
+
+生产入口和训练 wrapper 使用 Bash，PBS 提交仅适用于配置了 PBS 的 Linux 集群。
+Windows 可以创建 Python 环境并运行 Python 入口；使用 shell wrapper 时需要 Bash
+环境。
+
 ### 1. 克隆仓库
 
 ```bash
@@ -110,7 +122,6 @@ cd DRAFTS
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
-python -m pip install -r requirements.txt
 ```
 
 Windows PowerShell：
@@ -119,13 +130,24 @@ Windows PowerShell：
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
-python -m pip install -r requirements.txt
 ```
 
-PyTorch、torchvision 与 CuPy 应根据目标 CUDA 驱动安装。生产搜索环境的补充依赖
-和版本提示见 [`search_pipeline/requirements.txt`](search_pipeline/requirements.txt)。
-本项目不绑定特定主机或 GPU 型号；正式运行前应在目标环境执行 CUDA smoke test，
-并把实际 Python、依赖、GPU 与驱动版本随结果归档。
+先使用 [PyTorch 官方安装页面](https://pytorch.org/get-started/locally/)生成与目标
+CUDA 平台匹配的 `torch`、`torchvision` 安装命令，再安装仓库依赖和对应的 CuPy
+构建。下面以 CUDA 12.x 为例：
+
+```bash
+python -m pip install -r requirements.txt
+python -m pip install cupy-cuda12x
+```
+
+生产搜索环境的补充依赖见
+[`search_pipeline/requirements.txt`](search_pipeline/requirements.txt)。正式运行前
+检查 CUDA，并把实际 Python、依赖、GPU 与驱动版本随结果归档：
+
+```bash
+python -c "import torch, cupy; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'available', torch.cuda.is_available()); print('cupy devices', cupy.cuda.runtime.getDeviceCount())"
+```
 
 ### 3. 准备数据与模型
 
@@ -191,9 +213,9 @@ EPOCHS=50 \
 
 ```bash
 cd binary_classification
-MODEL_NAME=convnext_small \
+DATA_PATH=/path/to/binary_h5 \
 EPOCHS=50 \
-./train.sh "0,1,2,3"
+./train.sh "0,1,2,3" small
 ```
 
 当前真实搜索通常使用 `convnext_small` 作为候选真实性过滤器，`convnext_tiny` 可作为
@@ -243,43 +265,34 @@ python search_pipeline/t-blind-section.py \
 | `search_runtime/` | 注入基准使用的精简搜索代码与权重占位说明。 |
 | `presto_runtime/` | PRESTO blind-search 基线与阈值扫描代码。 |
 
-通用 search-only 示例：
+首次运行先用小批次 dry-run 检查路径和调度计划：
 
 ```bash
 python injection_benchmark/run_campaign.py \
+  --background-dir /path/to/background_fits \
   --work-root /path/to/injection_runs \
+  --sim-root /path/to/injection_runs/simdata \
+  --truth-root /path/to/injection_runs/truth_archive \
   --run-label example_campaign \
-  --batches 20 \
-  --count-per-batch 500 \
-  --search-only \
-  --runtime-dir injection_benchmark/search_runtime \
-  --gpu-num 8 \
-  --gpu-ids 0,1,2,3,4,5,6,7 \
-  --detector-type centernet_conv_tiny \
-  --detector-ckpt models/object_best_model_centernet_conv_tiny_ema_v10.pth \
-  --classifier-ckpt models/binary_best_model_conv_small_ema.pth \
-  --classifier-model-name convnext_small
+  --batches 1 \
+  --count-per-batch 32 \
+  --gpu-num 1 \
+  --gpu-ids 0 \
+  --dry-run
 ```
 
-权重放置、raw8/packed2 并行搜索、truth matching 容差和 PRESTO 对照见
+完整生成、search-only、权重放置、raw8/packed2 并行搜索、truth matching 容差和
+PRESTO 对照见
 [`injection_benchmark/README.md`](injection_benchmark/README.md)。
-
-## 运行结果
-
-不同工作流会产生不同类型的结果：
-
-- 模型训练输出 checkpoint、训练日志和验证指标；
-- 真实观测搜索输出候选清单、TOA/DM 估计和诊断图；
-- 注入基准输出 truth matching、召回率、误报率、定位误差和分箱统计。
-
-建议每次运行使用独立的输出目录，并通过命令行参数或环境变量传入数据和结果位置。
-具体文件名与目录结构见各工作流 README。
 
 ## 快速验证
 
-从仓库根目录运行：
+下载模型并完成环境安装后，从仓库根目录运行：
 
 ```bash
+python -c "import numpy, scipy, h5py, astropy, torch, torchvision; print('common imports OK')"
+python -c "import torch, cupy; assert torch.cuda.is_available(); print('CUDA devices', torch.cuda.device_count(), cupy.cuda.runtime.getDeviceCount())"
+python -c "from pathlib import Path; paths = [Path('search_pipeline/models/object_best_model_centernet_conv_tiny_ema_v10.pth'), Path('search_pipeline/models/binary_best_model_conv_small_ema.pth')]; assert all(p.is_file() for p in paths), paths; print('search weights OK')"
 python -m compileall -q \
   dataset_generation \
   object_detection \

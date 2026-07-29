@@ -2,6 +2,9 @@
 
 本目录把真实 FAST 背景数据和模拟 FRB 注入结合起来，生成 `object_detection/` 可直接读取的 CenterNet 训练 H5。当前主线是 multifitting 风格模拟信号、0-4096 DM 画布、512 x 512 time-DM 图像和最多 3 个目标框。
 
+第一次使用 DRAFTS 时，先按[仓库根 README](../README.md#快速开始)安装 CUDA、
+PyTorch、CuPy 和通用依赖。本文只说明训练数据的信号模型、采样分布、生成和检查。
+
 ## 文件职责
 
 | 路径 | 用途 |
@@ -11,12 +14,9 @@
 | `merge_shards.py` | 合并 shard H5，并同步生成合并后的 annotation/config/metadata/inspect 文件。 |
 | `inspect_dataset.py` | 快速检查 H5 内容，输出 JSON 摘要和 contact sheet。 |
 | `simulation_utils.py` | FRB 动态谱基本函数和 FAST 背景处理工具。物理参数采样在 `generate_dataset.py` 中完成。 |
-| `d-center-binary-core.py` | 生成器复用的 GPU 消色散核心；文件名有意与 `search_pipeline` 保持一致。 |
+| `d-center-binary-core.py` | 生成器复用的 GPU 消色散核心。 |
 | `rawdata/` | 背景 FITS 位置。大数据不随仓库保存，运行时用目录、软链接或 `RAW_DIR` 指定。 |
 | `shards_50000/` | 批量生成产物目录。属于可重算产物，不作为源码维护。 |
-
-Git 跟踪上述代码和 README；背景 FITS、shard、H5、缓存、日志和检查图由
-`.gitignore` 排除。
 
 ## 当前生成配置
 
@@ -84,7 +84,7 @@ Git 跟踪上述代码和 README；背景 FITS、shard、H5、缓存、日志和
 ```bash
 cd DRAFTS/dataset_generation
 RAW_DIR=/path/to/rawdata \
-PY=/path/to/miniconda3/bin/python \
+PY="$(command -v python)" \
 SHARDS_PER_WAVE=4 \
 ./run_generation.sh
 ```

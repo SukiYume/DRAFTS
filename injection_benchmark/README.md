@@ -2,6 +2,9 @@
 
 本目录用于评估 DRAFTS 搜索链路：把模拟 FRB 注入真实 FAST 背景，生成 raw8/packed2 FITS，调用搜索 runtime，匹配 truth manifest，并汇总召回、误报和量化影响。
 
+第一次使用 DRAFTS 时，先按[仓库根 README](../README.md#快速开始)完成环境安装。
+本文只说明注入信号、campaign 运行方式、truth matching 和 PRESTO 对照。
+
 ## 流程
 
 ```text
@@ -30,9 +33,6 @@ generate_injections.py
 | `simdata/` | 运行时生成的大体积 raw8/packed2 注入 FITS，供 DL 和 PRESTO 共用。 |
 | `truth_archive/` | 每个 batch/量化版本的 `truth_manifest.jsonl` 和 `run_config.json`，供 DL 和 PRESTO 共用。 |
 | `runs/` | DL 搜索、分析、汇总和日志目录；大体积注入 FITS 与其分开保存。 |
-
-Git 跟踪源码、README 和权重清单。`simdata/`、`truth_archive/`、`runs/`、结果目录，
-以及本地论文/笔记目录由 `.gitignore` 排除。
 
 `search_runtime/` 与 `search_pipeline/` 共享搜索模型实现。
 `binary_model.py`、`centernet_model.py` 和 `centernet_eval.py` 保持逐文件一致；
@@ -91,19 +91,19 @@ TOA 放置最多尝试 1024 次。给定窗口、注入数量、边界 guard 和
 `object_best_model_centernet_conv_tiny_ema_v10.pth` 和
 `binary_best_model_conv_small_ema.pth`。
 
-两份默认权重可以从任意兼容的模型仓库下载。将
-`DRAFTS_MODEL_BASE_URL` 设置为模型仓库基础地址；文件名和 SHA-256 同时记录在
+两份默认权重公开发布在
+[DRAFTS Hugging Face 模型仓库](https://huggingface.co/TorchLight/DRAFTS)。
+文件名和 SHA-256 同时记录在
 [`search_runtime/models/PUT_WEIGHTS_HERE.txt`](search_runtime/models/PUT_WEIGHTS_HERE.txt)。
 
 ```bash
 mkdir -p search_runtime/models
-: "${DRAFTS_MODEL_BASE_URL:?请设置模型仓库基础地址}"
-curl -L \
+curl -fL \
   -o search_runtime/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
-  "${DRAFTS_MODEL_BASE_URL%/}/object_best_model_centernet_conv_tiny_ema_v10.pth"
-curl -L \
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
+curl -fL \
   -o search_runtime/models/binary_best_model_conv_small_ema.pth \
-  "${DRAFTS_MODEL_BASE_URL%/}/binary_best_model_conv_small_ema.pth"
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
 ```
 
 ## 只生成注入数据
@@ -146,7 +146,6 @@ python generate_injections.py \
 
 ```bash
 cd DRAFTS/injection_benchmark
-conda activate "${CONDA_ENV:-pytorch}"
 python run_campaign.py \
   --work-root /path/to/injection_runs/runs \
   --sim-root /path/to/injection_runs/simdata \
@@ -201,3 +200,5 @@ truth 输入顺序，并保留可达到的最大召回。
 - 注入 FITS 体积很大。只有需要复用同一批注入数据做模型对比时才使用 `--keep-injected-fits`。
 - `--search-only` 依赖 `simdata/` 和 `truth_archive/` 中已有的注入数据；换 `--run-label` 前先确认对应 campaign 已生成。
 - `--overwrite-search` 只用于替换搜索、分析和汇总产物；它不负责重新生成注入 truth。
+- PRESTO 基线的环境要求、完整 blind-search 命令和阈值扫描见
+  [`presto_runtime/README.md`](presto_runtime/README.md)。

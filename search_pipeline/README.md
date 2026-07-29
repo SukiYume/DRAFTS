@@ -4,11 +4,14 @@
 
 当前默认搜索链路是 **CenterNet ConvNeXt-Tiny detector v10 + ConvNeXt-Small binary classifier**。
 
+第一次使用 DRAFTS 时，先按[仓库根 README](../README.md#快速开始)完成环境安装和
+默认模型下载；本文只说明真实观测搜索 runtime 的输入、参数、输出和排错。
+
 ## 入口选择
 
 | 场景 | 推荐入口 | 说明 |
 |---|---|---|
-| 不想改源码，先测试一段盲搜 | `t-blind-section.py` | 命令行参数完整，适合单 section / 多 section 调试。 |
+| 命令行盲搜测试 | `t-blind-section.py` | 参数完整，适合单 section / 多 section 调试。 |
 | 固定配置生产盲搜 | `d-center-binary-gate.py` | 脚本底部写路径、模型和 GPU section；适合 PBS 渲染。 |
 | 已知 DM / 候选 DM follow-up | `d-dm-time-predown.py` | 固定 DM，多时间下采样倍率，binary 分类。 |
 | PBS 批量提交 | `s-pbsspt.py` | 生成并提交多 section 作业，也可渲染目标专用 gate 脚本。 |
@@ -49,10 +52,7 @@ CuPy 不在通用依赖清单中：请单独安装与目标节点 CUDA toolkit �
 才需要额外安装 `numba`。PyTorch 与 torchvision 同样应选择和目标 CUDA 环境匹配的
 wheel。
 
-本目录不绑定特定主机、GPU 型号或驱动版本。应根据目标 CUDA 环境选择兼容的
-PyTorch、torchvision 与 CuPy，并在正式搜索前运行下面的环境检查。
-
-检查环境：
+正式搜索前检查 GPU 环境：
 
 ```bash
 python - <<'PY'
@@ -71,30 +71,23 @@ PY
 | CenterNet + ConvNeXt-Tiny detector v10 | `object_best_model_centernet_conv_tiny_ema_v10.pth` | `bcad4e710f5f1ccd3c8609d35a8d3fbfc36abd1d85bfefd035e945a573fb0629` |
 | ConvNeXt-Small binary classifier | `binary_best_model_conv_small_ema.pth` | `2055745aab76ddc16074516aa7b9aafdfaedf16df37ce8924389573eab27ffd8` |
 
-从任意兼容的模型仓库下载到 `models/`。以下示例通过
-`DRAFTS_MODEL_BASE_URL` 指定基础地址：
+默认权重公开发布在
+[DRAFTS Hugging Face 模型仓库](https://huggingface.co/TorchLight/DRAFTS)，
+可直接下载到 `models/`：
 
 ```bash
 mkdir -p models
-: "${DRAFTS_MODEL_BASE_URL:?请设置模型仓库基础地址}"
-curl -L \
+curl -fL \
   -o models/object_best_model_centernet_conv_tiny_ema_v10.pth \
-  "${DRAFTS_MODEL_BASE_URL%/}/object_best_model_centernet_conv_tiny_ema_v10.pth"
-curl -L \
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
+curl -fL \
   -o models/binary_best_model_conv_small_ema.pth \
-  "${DRAFTS_MODEL_BASE_URL%/}/binary_best_model_conv_small_ema.pth"
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
 ```
 
-当前默认：
-
-```python
-DETECTOR_TYPE = "centernet_conv_tiny"
-DETECTOR_CKPT = "./models/object_best_model_centernet_conv_tiny_ema_v10.pth"
-CLASSIFIER_MODEL_NAME = "convnext_small"
-CLASSIFIER_CKPT = "./models/binary_best_model_conv_small_ema.pth"
-```
-
-更换权重时需要同时保持 detector type、classifier backbone 和 checkpoint 架构一致。
+默认入口将这两个文件分别作为 `centernet_conv_tiny` detector 和
+`convnext_small` classifier 加载。更换权重时需要同时保持模型类型、backbone 和
+checkpoint 架构一致。
 
 支持的 detector：
 
@@ -297,7 +290,8 @@ python c-manifest-summary.py \
   --json c-candidates-zd202x.json
 ```
 
-后续用 `data_processing` 切原始数据时，先用 `signal_mjd` 减去整次观测起始 MJD：
+后续使用 [AFTER](https://github.com/SukiYume/AFTER) 裁切原始数据时，先用
+`signal_mjd` 减去整次观测起始 MJD：
 
 ```python
 cut_toa_sec = (signal_mjd - obs_start_mjd) * 86400.0

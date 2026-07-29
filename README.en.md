@@ -7,9 +7,9 @@
 A deep-learning pipeline for fast radio burst and single-pulse searches
 
 [![DRAFTS](https://img.shields.io/badge/Transient%20Search-DRAFTS-da282a)](https://github.com/SukiYume/DRAFTS)
-[![GitHub Stars](https://img.shields.io/github/stars/SukiYume/DRAFTS.svg?label=Stars&logo=github)](https://github.com/SukiYume/DRAFTS/stargazers)
+[![GitHub Stars](https://img.shields.io/github/stars/SukiYume/DRAFTS.svg?label=Stars&logo=github)](https://github.com/SukiYume/DRAFTS)
 [![arXiv](https://img.shields.io/badge/arXiv-2410.03200-b31b1b.svg)](https://arxiv.org/abs/2410.03200)
-[![Python](https://img.shields.io/badge/Python-3-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Related](https://img.shields.io/badge/Post--search-AFTER-1f6feb)](https://github.com/SukiYume/AFTER)
 
@@ -97,13 +97,33 @@ contracts, output conventions, and operational notes.
 
 ## Quick start
 
+### Prerequisites
+
+- [Git](https://git-scm.com/downloads);
+- 64-bit [Python 3.10+](https://www.python.org/downloads/) with `venv` and
+  `pip`;
+- an NVIDIA GPU with mutually compatible driver, CUDA, PyTorch, and CuPy
+  builds for data generation, training, and observation searches;
+- local or shared storage for raw FITS, training H5, and search products.
+
+Production launchers and training wrappers use Bash. PBS submission additionally
+requires a Linux cluster configured with PBS. Windows can create the Python
+environment and run Python entry points; shell wrappers require a Bash
+environment.
+
+### 1. Clone the repository
+
 ```bash
 git clone https://github.com/SukiYume/DRAFTS.git DRAFTS
 cd DRAFTS
+```
+
+### 2. Create the environment
+
+```bash
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
-python -m pip install -r requirements.txt
 ```
 
 Windows PowerShell:
@@ -112,17 +132,27 @@ Windows PowerShell:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
-python -m pip install -r requirements.txt
 ```
 
-Install PyTorch, torchvision, and CuPy with builds compatible with the target
-CUDA driver. Production-search notes are available in
-[`search_pipeline/requirements.txt`](search_pipeline/requirements.txt).
-The project is not tied to a particular host or GPU model. Run a CUDA smoke
-test on the target environment and archive the actual Python, package, GPU,
-and driver versions beside every production search.
+Use the [official PyTorch selector](https://pytorch.org/get-started/locally/)
+to install `torch` and `torchvision` for the target CUDA platform, then install
+the repository requirements and the matching CuPy build. For CUDA 12.x:
 
-### Data and pretrained models
+```bash
+python -m pip install -r requirements.txt
+python -m pip install cupy-cuda12x
+```
+
+Production-search additions are listed in
+[`search_pipeline/requirements.txt`](search_pipeline/requirements.txt).
+Run a CUDA smoke test and archive the actual Python, package, GPU, and driver
+versions beside every production search:
+
+```bash
+python -c "import torch, cupy; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'available', torch.cuda.is_available()); print('cupy devices', cupy.cuda.runtime.getDeviceCount())"
+```
+
+### 3. Prepare data and pretrained models
 
 The [training data](https://huggingface.co/datasets/TorchLight/DRAFTS) and
 [pretrained models](https://huggingface.co/TorchLight/DRAFTS) are publicly
@@ -184,9 +214,9 @@ supported backbones, training arguments, and evaluation.
 
 ```bash
 cd binary_classification
-MODEL_NAME=convnext_small \
+DATA_PATH=/path/to/binary_h5 \
 EPOCHS=50 \
-./train.sh "0,1,2,3"
+./train.sh "0,1,2,3" small
 ```
 
 The current search workflow commonly uses `convnext_small`; `convnext_tiny`
@@ -240,47 +270,35 @@ baseline.
 | `search_runtime/` | Minimal search runtime and model-weight placeholders. |
 | `presto_runtime/` | PRESTO blind-search baseline and threshold sweeps. |
 
-Generic search-only example:
+Start with a small dry run to inspect paths and the execution plan:
 
 ```bash
 python injection_benchmark/run_campaign.py \
+  --background-dir /path/to/background_fits \
   --work-root /path/to/injection_runs \
+  --sim-root /path/to/injection_runs/simdata \
+  --truth-root /path/to/injection_runs/truth_archive \
   --run-label example_campaign \
-  --batches 20 \
-  --count-per-batch 500 \
-  --search-only \
-  --runtime-dir injection_benchmark/search_runtime \
-  --gpu-num 8 \
-  --gpu-ids 0,1,2,3,4,5,6,7 \
-  --detector-type centernet_conv_tiny \
-  --detector-ckpt models/object_best_model_centernet_conv_tiny_ema_v10.pth \
-  --classifier-ckpt models/binary_best_model_conv_small_ema.pth \
-  --classifier-model-name convnext_small
+  --batches 1 \
+  --count-per-batch 32 \
+  --gpu-num 1 \
+  --gpu-ids 0 \
+  --dry-run
 ```
 
 See [`injection_benchmark/README.md`](injection_benchmark/README.md) for
-weight placement, raw8/packed2 parallel searches, truth tolerances, and the
-PRESTO baseline.
-
-## Run outputs
-
-Each workflow produces a different set of user-facing results:
-
-- model training writes checkpoints, training logs, and validation metrics;
-- observation searches write candidate manifests, TOA/DM estimates, and
-  diagnostic images;
-- injection campaigns write truth matches, recall, false-positive,
-  localization, and binned performance summaries.
-
-Use a dedicated output directory for each run and pass data and output
-locations through command-line arguments or environment variables. Each
-workflow README documents its exact filenames and directory layout.
+full generation and search-only runs, weight placement, raw8/packed2 parallel
+searches, truth tolerances, and the PRESTO baseline.
 
 ## Validation
 
-From the repository root:
+After installing the environment and downloading the models, run from the
+repository root:
 
 ```bash
+python -c "import numpy, scipy, h5py, astropy, torch, torchvision; print('common imports OK')"
+python -c "import torch, cupy; assert torch.cuda.is_available(); print('CUDA devices', torch.cuda.device_count(), cupy.cuda.runtime.getDeviceCount())"
+python -c "from pathlib import Path; paths = [Path('search_pipeline/models/object_best_model_centernet_conv_tiny_ema_v10.pth'), Path('search_pipeline/models/binary_best_model_conv_small_ema.pth')]; assert all(p.is_file() for p in paths), paths; print('search weights OK')"
 python -m compileall -q \
   dataset_generation \
   object_detection \

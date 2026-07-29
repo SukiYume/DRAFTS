@@ -1,10 +1,16 @@
 # DRAFTS PRESTO blind single-pulse baseline
 
-This directory contains the PRESTO baseline for the injection benchmark.  The
-formal recall/precision figures use a blind DM search, not truth-DM windows.
+This directory contains the PRESTO baseline for the injection benchmark. The
+formal recall/precision figures use a blind search across the configured DM
+range.
 The searched FITS live in the benchmark-level `simdata/` directory, and the
 truth manifests live in the benchmark-level `truth_archive/` directory.  DL
 `runs/` directories are search outputs only.
+
+Start with the [DRAFTS installation guide](../../README.en.md#quick-start) and
+the [injection benchmark workflow](../README.md). This page covers only the
+additional PRESTO environment, blind-search command, outputs, and threshold
+sweeps.
 
 ## Files
 
@@ -18,8 +24,9 @@ truth manifests live in the benchmark-level `truth_archive/` directory.  DL
 
 ## Requirements
 
-Run this workflow in an environment where PRESTO is installed and the following
-commands are available on `PATH`:
+Install [PRESTO](https://github.com/scottransom/presto) in a dedicated
+environment, install the DRAFTS Python dependencies from the repository root,
+and verify that these commands are available on `PATH`:
 
 ```text
 rfifind
@@ -27,11 +34,10 @@ prepsubband
 single_pulse_search.py
 ```
 
-Install the DRAFTS Python dependencies from the repository root. The campaign
-also needs a writable scratch directory with enough space for temporary
-`.dat`, `.inf`, mask, and single-pulse products. Use `--scratch-root` or the
-`PRESTO_SCRATCH_ROOT` environment variable to place those files on suitable
-local storage.
+The campaign also needs a writable scratch directory with enough space for
+temporary `.dat`, `.inf`, mask, and single-pulse products. Use
+`--scratch-root` or the `PRESTO_SCRATCH_ROOT` environment variable to place
+those files on suitable local storage.
 
 ## PRESTO command pattern
 
@@ -76,8 +82,6 @@ Run the full blind baseline directly through the Python entrypoint:
 
 ```bash
 cd DRAFTS/injection_benchmark/presto_runtime
-source /path/to/miniforge3/etc/profile.d/conda.sh
-conda activate "${CONDA_ENV:-presto}"
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
 OUT_ROOT="${OUT_ROOT:-$PWD/results/presto_blind_full_$STAMP}"
