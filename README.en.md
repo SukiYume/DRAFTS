@@ -11,6 +11,7 @@ A deep-learning pipeline for fast radio burst and single-pulse searches
 [![arXiv](https://img.shields.io/badge/arXiv-2410.03200-b31b1b.svg)](https://arxiv.org/abs/2410.03200)
 [![Python](https://img.shields.io/badge/Python-3-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Related](https://img.shields.io/badge/Post--search-AFTER-1f6feb)](https://github.com/SukiYume/AFTER)
 
 [Overview](#overview) ·
 [Pipeline](#drafts-pipeline) ·
@@ -54,8 +55,9 @@ FAST observations, and raw8/packed2 injection evaluation.
 - A two-stage detector/classifier design for localization and verification;
 - Search entry points organized around real FAST observations;
 - Reproducible raw8/packed2 injection campaigns and a PRESTO baseline;
-- Public training data and pretrained models available from Hugging Face, with
-  deployment instructions in each workflow README.
+- Public [training data](https://huggingface.co/datasets/TorchLight/DRAFTS) and
+  [pretrained models](https://huggingface.co/TorchLight/DRAFTS) on Hugging Face,
+  with deployment instructions in each workflow README.
 
 ## DRAFTS pipeline
 
@@ -96,8 +98,7 @@ contracts, output conventions, and operational notes.
 ## Quick start
 
 ```bash
-: "${DRAFTS_REPOSITORY_URL:?set the repository URL}"
-git clone "$DRAFTS_REPOSITORY_URL" DRAFTS
+git clone https://github.com/SukiYume/DRAFTS.git DRAFTS
 cd DRAFTS
 python -m venv .venv
 source .venv/bin/activate
@@ -123,9 +124,9 @@ and driver versions beside every production search.
 
 ### Data and pretrained models
 
-Training data and pretrained weights may be supplied from any compatible
-object store or model registry. Set `DRAFTS_MODEL_BASE_URL` to a base URL that
-directly exposes the files below.
+The [training data](https://huggingface.co/datasets/TorchLight/DRAFTS) and
+[pretrained models](https://huggingface.co/TorchLight/DRAFTS) are publicly
+available on Hugging Face.
 
 The current search runtime uses:
 
@@ -138,13 +139,12 @@ Download both files directly into `search_pipeline/models/` for observation sear
 
 ```bash
 mkdir -p search_pipeline/models
-: "${DRAFTS_MODEL_BASE_URL:?set the model-registry base URL}"
-curl -L \
+curl -fL \
   -o search_pipeline/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
-  "${DRAFTS_MODEL_BASE_URL%/}/object_best_model_centernet_conv_tiny_ema_v10.pth"
-curl -L \
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
+curl -fL \
   -o search_pipeline/models/binary_best_model_conv_small_ema.pth \
-  "${DRAFTS_MODEL_BASE_URL%/}/binary_best_model_conv_small_ema.pth"
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
 ```
 
 The injection benchmark uses the same two files in the runtime location described

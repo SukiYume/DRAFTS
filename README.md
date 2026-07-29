@@ -11,6 +11,7 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2410.03200-b31b1b.svg)](https://arxiv.org/abs/2410.03200)
 [![Python](https://img.shields.io/badge/Python-3-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Related](https://img.shields.io/badge/Post--search-AFTER-1f6feb)](https://github.com/SukiYume/AFTER)
 
 [项目概览](#项目概览) ·
 [流水线](#drafts-流水线) ·
@@ -53,8 +54,9 @@ DRAFTS 的核心由三部分组成：
   的接口；
 - **独立注入评估**：支持 raw8 与 packed2 数据生成、真值匹配、召回率/误报率统计和
   PRESTO 基线对照；
-- **公开资源可用**：训练数据和预训练模型可直接从 Hugging Face 下载，并按各工作流
-  README 的说明部署。
+- **公开资源可用**：[训练数据](https://huggingface.co/datasets/TorchLight/DRAFTS)和
+  [预训练模型](https://huggingface.co/TorchLight/DRAFTS)可直接从 Hugging Face 下载，
+  并按各工作流 README 的说明部署。
 
 ## DRAFTS 流水线
 
@@ -98,8 +100,7 @@ flowchart LR
 ### 1. 克隆仓库
 
 ```bash
-: "${DRAFTS_REPOSITORY_URL:?请设置代码仓库地址}"
-git clone "$DRAFTS_REPOSITORY_URL" DRAFTS
+git clone https://github.com/SukiYume/DRAFTS.git DRAFTS
 cd DRAFTS
 ```
 
@@ -128,8 +129,8 @@ PyTorch、torchvision 与 CuPy 应根据目标 CUDA 驱动安装。生产搜索�
 
 ### 3. 准备数据与模型
 
-训练数据和预训练权重可以来自任意兼容的对象存储或模型仓库。下载默认权重时，
-将 `DRAFTS_MODEL_BASE_URL` 设置为能够直接访问下列文件的基础地址。
+[训练数据](https://huggingface.co/datasets/TorchLight/DRAFTS)和
+[预训练模型](https://huggingface.co/TorchLight/DRAFTS)公开发布在 Hugging Face。
 
 当前搜索链路使用：
 
@@ -142,13 +143,12 @@ PyTorch、torchvision 与 CuPy 应根据目标 CUDA 驱动安装。生产搜索�
 
 ```bash
 mkdir -p search_pipeline/models
-: "${DRAFTS_MODEL_BASE_URL:?请设置模型仓库基础地址}"
-curl -L \
+curl -fL \
   -o search_pipeline/models/object_best_model_centernet_conv_tiny_ema_v10.pth \
-  "${DRAFTS_MODEL_BASE_URL%/}/object_best_model_centernet_conv_tiny_ema_v10.pth"
-curl -L \
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/object_best_model_centernet_conv_tiny_ema_v10.pth
+curl -fL \
   -o search_pipeline/models/binary_best_model_conv_small_ema.pth \
-  "${DRAFTS_MODEL_BASE_URL%/}/binary_best_model_conv_small_ema.pth"
+  https://huggingface.co/TorchLight/DRAFTS/resolve/main/binary_best_model_conv_small_ema.pth
 ```
 
 注入基准使用相同的两个文件，放置位置见
