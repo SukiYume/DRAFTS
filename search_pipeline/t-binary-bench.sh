@@ -7,8 +7,8 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUT_ROOT="${OUT_ROOT:-/path/to/drafts_runs/binary_output}"
-CONDA_SH="${CONDA_SH:-/path/to/miniforge3/etc/profile.d/conda.sh}"
+OUT_ROOT="${OUT_ROOT:-$ROOT_DIR/outputs/binary_output}"
+CONDA_SH="${CONDA_SH:-/home/ykzhang/SoftWare/miniforge3/etc/profile.d/conda.sh}"
 CONDA_ENV="${CONDA_ENV:-pytorch}"
 PROB="${PROB:-0.5}"
 CLEAN_OUTPUT="${CLEAN_OUTPUT:-1}"

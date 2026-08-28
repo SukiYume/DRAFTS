@@ -13,23 +13,25 @@
 |---|---|---|
 | 命令行盲搜测试 | `t-blind-section.py` | 参数完整，适合单 section / 多 section 调试。 |
 | 固定配置生产盲搜 | `d-center-binary-gate.py` | 脚本底部写路径、模型和 GPU section；适合 PBS 渲染。 |
+| 原始分辨率 GPU 盲搜 | `d-center-binary-gate-new.py` | 调用 new core；细通道消色散后再下采样，DM 参数使用真实物理单位。 |
 | 已知 DM / 候选 DM follow-up | `d-dm-time-predown.py` | 固定 DM，多时间下采样倍率，binary 分类。 |
 | PBS 批量提交 | `s-pbsspt.py` | 生成并提交多 section 作业，也可渲染目标专用 gate 脚本。 |
-| detector 后端 benchmark | `t-object-bench.py` / `t-object-matrix.sh` | 只跑消色散、检测图和 detector，不跑 binary。 |
 | fixed-DM binary 对比 | `t-binary-bench.sh` | 比较不同 binary 分类器的真实输出。 |
 
-推荐先用 `t-blind-section.py --dry-run` 确认数据分片和输出路径，再跑实际搜索；生产批量再改 `d-center-binary-gate.py`，并用 `s-pbsspt.py` 提交 PBS。
+推荐先用 `t-blind-section.py --dry-run` 确认数据分片和输出路径，再跑实际搜索；使用
+new core 时修改 `d-center-binary-gate-new.py` 底部配置，并用 `s-pbsspt.py` 提交 PBS。
 
 ## 文件职责
 
 | 文件或目录 | 作用 |
 |---|---|
 | `d-center-binary-gate.py` | 两阶段盲搜调度入口：组织 FITS、section 切分、加载模型、断点日志、调用 core。 |
+| `d-center-binary-gate-new.py` | new core 对应调度入口；使用物理 DM 配置并显式提供动态 RFI 参数。 |
 | `d-center-binary-core.py` | 两阶段盲搜核心：CuPy 消色散、DM-time 图、CenterNet 检测、candidate cutout、binary 分类和保存。 |
+| `d-center-binary-core-new.py` | 原始时间/频率分辨率上传 GPU 后再消色散和下采样的新版 core；DM 配置全部使用物理单位。 |
 | `d-dm-time-predown.py` | fixed-DM follow-up：单 DM 消色散、多尺度图片生成、binary 分类。 |
 | `t-blind-section.py` | 命令行式盲搜 section wrapper。 |
 | `t-blind-batch.sh` | 多 GPU 盲搜批量测试 wrapper。 |
-| `t-object-bench.py` / `t-object-matrix.sh` | detector-only benchmark。 |
 | `t-binary-bench.sh` | fixed-DM binary 模型输出对比。 |
 | `s-pbsspt.py` | PBS 脚本生成、提交和状态查询。 |
 | `c-data-check.py` | 拼接若干 FITS 后画频率时间图，做数据检查。 |
@@ -48,9 +50,7 @@ python -m pip install -r requirements.txt
 ```
 
 CuPy 不在通用依赖清单中：请单独安装与目标节点 CUDA toolkit 匹配的构建，例如
-`cupy-cuda12x`。`t-object-bench.py --backend numba` 是可选 benchmark，只有使用该后端时
-才需要额外安装 `numba`。PyTorch 与 torchvision 同样应选择和目标 CUDA 环境匹配的
-wheel。
+`cupy-cuda12x`。PyTorch 与 torchvision 同样应选择和目标 CUDA 环境匹配的 wheel。
 
 正式搜索前检查 GPU 环境：
 
@@ -148,7 +148,7 @@ CUDA_VISIBLE_DEVICES=0 python t-blind-section.py \
   --section 0 \
   --gpu-num 1 \
   --data-path /path/to/fast_observation/source/date \
-  --output-root /path/to/drafts_runs/blind \
+  --output-root /home/ykzhang/data_searching/outputs/blind \
   --beam M01 \
   --detector-type centernet_conv_tiny \
   --detector-ckpt models/object_best_model_centernet_conv_tiny_ema_v10.pth \
@@ -181,8 +181,8 @@ CUDA_VISIBLE_DEVICES=0 python t-blind-section.py \
 开发节点上直接跑多 section 示例：
 
 ```bash
-ROOT=/path/to/drafts_runs/data_searching \
-OUTPUT_ROOT=/path/to/drafts_runs/blind \
+ROOT=/home/ykzhang/data_searching \
+OUTPUT_ROOT=/home/ykzhang/data_searching/outputs/blind \
 BEAM=all GPU_NUM=8 \
 DM_THRESHOLD=10 BLOCK_SIZE=4096 DM_SPAN=1024 DET_PROB=0.45 \
   bash t-blind-batch.sh /path/to/fast_observation/
@@ -226,20 +226,52 @@ python c-manifest-build.py \
   --output /path/to/observations/CRAFTS/task_manifest_zd202x_1_1_2bit.json
 ```
 
+### new core 的物理 DM 参数
+
+`d-center-binary-gate-new.py` 加载 `d-center-binary-core-new.py`，使用实际 DM 值定义搜索区间：
+
+```python
+process_config = ProcessConfig(
+    dm_min=0,          # 搜索起点
+    dm_range=4096,     # 实际物理 DM 宽度
+    dm_step=1,         # 相邻 trial 的物理 DM 间隔
+    block_size=4096,
+    time_factor=8,
+)
+```
+
+`dm_range` 是 pc cm^-3 单位的真实范围，不是 DM 点数。搜索区间为半开区间
+`[dm_min, dm_min + dm_range)`；上例即 `[0, 4096)`，内部派生出 4096 个 trial。
+每张检测图固定包含 1024 个 trial、平均成 512 行，所以 gate 默认生成 4 张
+分别覆盖 0--1024、1024--2048、2048--3072 和 3072--4096 的检测图。
+
+`dm_range / dm_step` 必须是正整数且是 1024 的整数倍。配置不能完整切块时
+程序不会补零，而是报错并给出最近的合法 `dm_range`，避免空白行改变图像动态范围。
+常规 4096-DM 盲搜写作 `dm_min=0, dm_range=4096, dm_step=1`。
+
+FITS 解码和偏振相加在 CPU 完成，原始时间/频率分辨率的 `uint16` 数据随后上传一次。
+动态 RFI、细通道消色散、时间/频率下采样、DM-time 归一化、目标检测、候选 cutout
+和 binary 推理都在 GPU 上完成。CuPy 与 PyTorch 之间通过 DLPack 零拷贝共享显存；
+只有 detector 解码后的少量候选坐标、binary 分数，以及最终正样本保存时的数据回到 CPU。
+
 多个数据根可以重复传入 `--data-path`。生成后把 gate 中的 `task_manifest` 指向该
 JSON；更换数据集时应重新生成，避免继续使用旧任务清单。
 
 直接运行某个 section：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python d-center-binary-gate.py 0
+CUDA_VISIBLE_DEVICES=0 python d-center-binary-gate-new.py 0
 ```
 
-`processing_log_zd202x_1_1_2bit.txt` 每行记录一个已完成 identifier。重跑全集时删除
-对应日志：
+PBS 批量运行时，将 `s-pbsspt.py` 中的 `script_name` 设置为
+`d-center-binary-gate-new.py`；其 `section_num` 必须继续与 GPU 数乘以
+`workers_per_gpu` 相等。
+
+`d-center-binary-gate-new.py` 默认使用 `processing_log_new.txt`，每行记录一个已完成
+identifier。重跑全集时删除对应日志：
 
 ```bash
-rm -f processing_log_zd202x_1_1_2bit.txt
+rm -f processing_log_new.txt
 ```
 
 未在完成日志中的 beam 级任务重跑前会自动删除该 beam 的旧输出目录；单次观测的 section 分段不执行自动清理。
@@ -389,34 +421,6 @@ qstat -u $USER
 ```
 
 ## Benchmark 工具
-
-Detector-only：
-
-```bash
-CUDA_VISIBLE_DEVICES=0 python t-object-bench.py \
-  --backend cupy \
-  --detector-type centernet_conv_tiny \
-  --detector-ckpt models/object_best_model_centernet_conv_tiny_ema_v10.pth \
-  --data-path /path/to/fast_observation/source/date \
-  --output-root /path/to/drafts_runs/object_backend \
-  --dm-range 4096 \
-  --dm-scale 1 \
-  --dm-offset 0 \
-  --dm-threshold 10 \
-  --block-size 4096 \
-  --detect-dm-span 1024 \
-  --det-prob 0.45
-```
-
-多组合矩阵：
-
-```bash
-ROOT=/path/to/drafts_runs/data_searching \
-DATA_PATH=/path/to/fast_observation/source/date \
-OUT_ROOT=/path/to/drafts_runs/object_backend \
-GPU_NUM=4 BACKENDS="cupy" MODELS="centernet_conv_tiny" SAVE_PLOT=0 \
-  bash t-object-matrix.sh
-```
 
 Fixed-DM binary 对比：
 

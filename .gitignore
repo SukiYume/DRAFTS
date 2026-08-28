@@ -72,10 +72,14 @@ shards_*/
 
 # Local-only or retired code/results
 /search_pipeline/legacy/
-/search_pipeline/d-dm-time-predown-121102.py
+/search_pipeline/frb190417*
+/search_pipeline/d-dm-time-predown-*.py
+/search_pipeline/d-center-binary-gate-*.py
+!/search_pipeline/d-center-binary-gate-new.py
 /binary_classification/nenufar_eval_*/
 /binary_classification/resolution_eval_*/
 /output/
+/upgrade_plan.md
 
 # Injection benchmark boundary: keep only benchmark/runtime code
 /injection_benchmark/aastex702/

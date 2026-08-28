@@ -35,7 +35,7 @@ def create_pbs_script(sections, node, root_path, script_name, job_name_prefix="c
 
     PBS 只申请 1 块 GPU（``GRES:gpu@1``），``sections`` 里的每个 section 各起一个
     后台进程，天然共享这块卡；每个 section 的输出单独重定向到自己的日志文件，
-    避免和其它并发 section 的输出混在一起。
+    避免和其它并发 section 的输出混在一起。PBS 自身的标准输出和错误合并到一个作业日志。
     """
     section_tag = f"{sections[0]:02d}" if len(sections) == 1 else f"{sections[0]:02d}-{sections[-1]:02d}"
     run_lines = "\n".join(
@@ -45,8 +45,8 @@ def create_pbs_script(sections, node, root_path, script_name, job_name_prefix="c
     )
     return f'''#!/bin/bash
 #PBS -N {job_name_prefix}-{section_tag}
-#PBS -o {root_path}pbsspt/{job_name_prefix}-cm{section_tag}-output.log
-#PBS -e {root_path}pbsspt/{job_name_prefix}-cm{section_tag}-error.err
+#PBS -o {root_path}pbsspt/{job_name_prefix}-job{section_tag}.log
+#PBS -j oe
 #PBS -q gpu
 #PBS -l nodes=gpu{node:02d}
 #PBS -W x=GRES:gpu@1
@@ -212,7 +212,7 @@ def submit_jobs(root_path, script_name, node_config, job_name="center", dry_run=
 
     print(f"[INFO] 准备提交 {total_gpus} 个作业，每卡并发 {workers_per_gpu} 个 section，"
           f"共 {total_sections} 个 section")
-    print(f"[INFO] 节点分配:")
+    print("[INFO] 节点分配:")
     for node, count in node_config.items():
         print(f"       Node {node:02d}: {count} 块 GPU")
     print(f"[INFO] 脚本目录: {script_path}")
@@ -262,7 +262,7 @@ def submit_jobs(root_path, script_name, node_config, job_name="center", dry_run=
                         time.sleep(5)                                     # 避免过快提交
                     else:
                         print(f"[DRY-RUN] 将提交: {pbs_file_name}")
-                        log_f.write(f"    -> DRY-RUN模式\n")
+                        log_f.write("    -> DRY-RUN模式\n")
 
                 except Exception as e:
                     failed_jobs.append((sections, node, str(e)))
@@ -330,7 +330,9 @@ def print_help():
 if __name__ == '__main__':
 
     # ---- 配置 ----
-    root_path       = '/path/to/drafts_runs/search_pipeline/'                # 末尾要带 '/'
+    # 用脚本所在目录作为搜索代码根目录。部署到远端的新目录后会自动解析为
+    # /home/ykzhang/data_searching/，避免目录迁移后仍生成指向 drafts_runs 的 PBS 脚本。
+    root_path       = str(Path(__file__).resolve().parent) + os.sep
     workers_per_gpu = 4                                                   # 每块 GPU 并发跑几个 section（1~4）
     script_name     = 'd-center-binary-gate.py'                           # 或 'd-dm-time-predown.py'
     node_config     = {1: 8}                                              # {节点号: GPU数}

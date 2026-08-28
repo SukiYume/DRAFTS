@@ -294,6 +294,7 @@ if __name__ == '__main__':
     # data_path   = '/path/to/CRAFTS/'
     if data_path is not None:
         data_paths = [data_path]
+        task_manifest = None
 
     # ---- 读取已完成任务（断点续跑）----
     completed_tasks = set()

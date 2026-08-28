@@ -15,6 +15,7 @@ ConvNeXt 二分类器判断候选是否更像真实 burst。默认部署模型�
 | `binary_model.py` | 定义 `ConvNeXtNet` 与 `SPPConvNeXt`。 |
 | `binary_train.py` | 单卡或 DDP 训练入口，支持 AMP、EMA、resume 和 finetune。 |
 | `binary_infer.py` | 对 H5 数据集推理并导出逐样本预测表。 |
+| `visual_data.ipynb` | 用当前 ConvNeXt-Small 权重展示验证预处理、预测概率和 Grad-CAM。 |
 | `train.sh` | 统一多卡启动参数和模型别名。 |
 
 训练产生的 checkpoint、逐 epoch 指标和推理表写入运行目录。本目录保留可运行的代码和

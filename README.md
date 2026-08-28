@@ -89,6 +89,7 @@ flowchart LR
 | [`dataset_generation/`](dataset_generation/) | 向真实 FAST 背景注入模拟 FRB，生成 512 × 512 time–DM 图和 CenterNet H5 训练集。 |
 | [`object_detection/`](object_detection/) | 训练、评估和推理当前 CenterNet 检测器。 |
 | [`binary_classification/`](binary_classification/) | 训练和评估 ConvNeXt/SPPConvNeXt 候选二分类器。 |
+| [`anomaly_detection/`](anomaly_detection/) | 使用 ConvNeXt 自编码器/VAE 重建误差发现时频谱异常。 |
 | [`search_pipeline/`](search_pipeline/) | 可部署的真实观测搜索入口、fixed-DM follow-up、PBS 提交和后端 benchmark。 |
 | [`injection_benchmark/`](injection_benchmark/) | DRAFTS 注入基准：raw8/packed2 生成、搜索、truth matching、汇总和 PRESTO 基线。 |
 | [`requirements.txt`](requirements.txt) | 通用 Python 依赖；CUDA 相关包需按运行机器单独匹配。 |
@@ -231,7 +232,6 @@ EPOCHS=50 \
 | 未知 DM 盲搜 | `d-center-binary-gate.py` 或 `t-blind-section.py` |
 | 已知 DM / 候选 DM follow-up | `d-dm-time-predown.py` |
 | PBS 批量提交 | `s-pbsspt.py` |
-| 检测后端 benchmark | `t-object-bench.py` / `t-object-matrix.sh` |
 | binary 模型对比 | `t-binary-bench.sh` |
 
 通用盲搜示例：
@@ -297,6 +297,7 @@ python -m compileall -q \
   dataset_generation \
   object_detection \
   binary_classification \
+  anomaly_detection \
   search_pipeline \
   injection_benchmark
 ```

@@ -1,0 +1,8 @@
+__pycache__/
+.ipynb_checkpoints/
+outputs/
+inference_data/
+inference_results/
+latent_analysis/
+*.fits
+*.h5

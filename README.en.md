@@ -234,7 +234,6 @@ self-contained runtime directory.
 | Blind search over unknown DM | `d-center-binary-gate.py` or `t-blind-section.py` |
 | Known-DM or candidate-DM follow-up | `d-dm-time-predown.py` |
 | PBS batch submission | `s-pbsspt.py` |
-| Detector-backend benchmark | `t-object-bench.py` / `t-object-matrix.sh` |
 | Binary-classifier comparison | `t-binary-bench.sh` |
 
 Generic blind-search example:

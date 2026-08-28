@@ -2,8 +2,8 @@
 # Run t-blind-section.py across several datasets and GPU sections.
 #
 # Example, production-like CRAFTS search parameters:
-#   ROOT=/path/to/drafts_runs/data_searching \
-#   OUTPUT_ROOT=/path/to/drafts_runs/blind \
+#   ROOT=/home/ykzhang/data_searching \
+#   OUTPUT_ROOT=/home/ykzhang/data_searching/outputs/blind \
 #   BEAM=all GPU_NUM=8 DM_THRESHOLD=10 BLOCK_SIZE=4096 DM_SPAN=1024 DET_PROB=0.45 \
 #     bash t-blind-batch.sh /path/to/observations/source/date
 #

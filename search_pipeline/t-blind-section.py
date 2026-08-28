@@ -7,7 +7,7 @@ Example, production-like CRAFTS parameters on one local section:
     CUDA_VISIBLE_DEVICES=0 python t-blind-section.py \
         --section 0 --gpu-num 1 \
         --data-path /path/to/observations/source/date \
-        --output-root /path/to/drafts_runs/blind \
+        --output-root /home/ykzhang/data_searching/outputs/blind \
         --beam M01 \
         --dm-range 4096 --dm-scale 1 --dm-offset 0 \
         --dm-threshold 10 --block-size 4096 --dm-span 1024 --det-prob 0.45
