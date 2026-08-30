@@ -1,3 +1,5 @@
+# fmt: off
+
 """PRESTO 注入基准的公共统计和画图工具。
 
 本模块只放跨脚本共享的纯函数：参数分箱、truth/event 关联、CSV 读写以及最终
@@ -10,6 +12,7 @@ from __future__ import annotations
 import csv
 import gzip
 import math
+from collections import Counter
 from pathlib import Path
 
 import matplotlib
@@ -20,9 +23,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
 
-
-QUANTIZATIONS = ("raw8", "packed2")
-SNR_BINS = [5, 7, 10, 15, 22, 33, 50, 75, 100]
+QUANTIZATIONS    = ("raw8", "packed2")
+FLUENCE_SNR_BINS = [3, 5, 7, 10, 15, 22, 33, 50, 75, 100]
 PARAM_SPECS = {
     "dm_pc_cm3": {
         "label": "DM (pc cm$^{-3}$)",
@@ -70,6 +72,7 @@ MAKO_LIKE = LinearSegmentedColormap.from_list(
 # 文件读写
 # ---------------------------------------------------------------------------
 
+
 def read_csv(path: Path) -> list[dict[str, str]]:
     """读取普通 CSV 或 gzip 压缩 CSV。"""
     opener = gzip.open if path.suffix == ".gz" else open
@@ -90,6 +93,7 @@ def write_csv(path: Path, rows: list[dict], fields: list[str]) -> None:
 # 分箱和 truth/event 关联
 # ---------------------------------------------------------------------------
 
+
 def bin_index(value: float, bins: list[float]) -> int | None:
     """返回 value 所在的半开区间索引；最后一个 bin 右端点闭合。"""
     for index, (lo, hi) in enumerate(zip(bins[:-1], bins[1:])):
@@ -107,7 +111,11 @@ def labels_for_bins(bins: list[float], labels: list[str] | None = None) -> list[
 
 def infer_center_freq_bins(truth: list[dict], bins: int = 8) -> list[float]:
     """根据 truth 中实际中心频率范围生成等宽 center-frequency 分箱。"""
-    values = [float(row["center_freq_mhz"]) for row in truth if row.get("center_freq_mhz") not in ("", None)]
+    values = [
+        float(row["center_freq_mhz"])
+        for row in truth
+        if row.get("center_freq_mhz") not in ("", None)
+    ]
     if not values:
         return [1000, 1062.5, 1125, 1187.5, 1250, 1312.5, 1375, 1437.5, 1500]
     lo = math.floor(min(values) / 10.0) * 10.0
@@ -138,25 +146,36 @@ def event_key(row: dict) -> tuple[str, int, str]:
 
 def event_dt_ms(event: dict, truth: dict) -> float:
     dt = float(truth.get("time_reso_seconds") or event.get("dt_seconds") or 4.9152e-05)
-    return (float(event["sample"]) - float(truth["highest_freq_toa_file_raw_sample"])) * dt * 1000.0
+    return (
+        (float(event["sample"]) - float(truth["highest_freq_toa_file_raw_sample"]))
+        * dt
+        * 1000.0
+    )
 
 
 def event_ddm(event: dict, truth: dict) -> float:
     return float(event["dm_pc_cm3"]) - float(truth["dm_pc_cm3"])
 
 
-def event_matches_truth(event: dict, truth: dict, dm_tol: float, time_tol_ms: float) -> bool:
-    return abs(event_ddm(event, truth)) <= dm_tol and abs(event_dt_ms(event, truth)) <= time_tol_ms
+def event_matches_truth(
+    event: dict, truth: dict, dm_tol: float, time_tol_ms: float
+) -> bool:
+    return (
+        abs(event_ddm(event, truth)) <= dm_tol
+        and abs(event_dt_ms(event, truth)) <= time_tol_ms
+    )
 
 
-def nearest_truth_with_distance(event: dict, truths: list[dict]) -> tuple[dict | None, float]:
+def nearest_truth_with_distance(
+    event: dict, truths: list[dict]
+) -> tuple[dict | None, float]:
     """按 time + 0.5 * DM 的经验距离找最近 truth。"""
-    best = None
+    best      = None
     best_dist = float("inf")
     for truth in truths:
         dist = abs(event_dt_ms(event, truth)) + 0.5 * abs(event_ddm(event, truth))
         if dist < best_dist:
-            best = truth
+            best      = truth
             best_dist = dist
     return best, best_dist
 
@@ -169,16 +188,19 @@ def nearest_truth(event: dict, truths: list[dict]) -> dict | None:
 # 画图：所有 PRESTO 最终图只从这里生成
 # ---------------------------------------------------------------------------
 
-def metric_matrix(cells: list[dict], quant: str, metric: str, bins: list[float]) -> tuple[np.ndarray, np.ndarray]:
-    values = np.full((len(bins) - 1, len(SNR_BINS) - 1), np.nan)
+
+def metric_matrix(
+    cells: list[dict], quant: str, metric: str, bins: list[float]
+) -> tuple[np.ndarray, np.ndarray]:
+    values = np.full((len(bins) - 1, len(FLUENCE_SNR_BINS) - 1), np.nan)
     counts = np.zeros_like(values, dtype=int)
     for row in cells:
         if row["quantization"] != quant:
             continue
-        y = int(row["param_bin"])
-        x = int(row["snr_bin"])
+        y            = int(row["param_bin"])
+        x            = int(row["fluence_snr_bin"])
         counts[y, x] = int(row["n_injected"])
-        value = row.get(metric, "")
+        value        = row.get(metric, "")
         if value != "":
             values[y, x] = float(value)
     return values, counts
@@ -190,15 +212,15 @@ def clean_axes(ax) -> None:
         spine.set_color("black")
         spine.set_linewidth(0.8)
     ax.tick_params(
-        axis="both",
-        which="both",
-        top=True,
-        right=True,
-        direction="out",
-        length=3.5,
-        width=0.8,
-        colors="black",
-        labelsize=8.5,
+        axis      = "both",
+        which     = "both",
+        top       = True,
+        right     = True,
+        direction = "out",
+        length    = 3.5,
+        width     = 0.8,
+        colors    = "black",
+        labelsize = 8.5,
     )
     ax.grid(False)
 
@@ -206,19 +228,23 @@ def clean_axes(ax) -> None:
 def draw_contours(ax, data: np.ndarray) -> None:
     if np.isfinite(data).sum() < 4:
         return
-    filled = data.copy()
+    filled                       = data.copy()
     filled[~np.isfinite(filled)] = float(np.nanmedian(filled))
-    levels = [level for level in (0.9, 0.95, 0.98, 0.99) if np.nanmin(filled) <= level <= np.nanmax(filled)]
+    levels = [
+        level
+        for level in (0.9, 0.95, 0.98, 0.99)
+        if np.nanmin(filled) <= level <= np.nanmax(filled)
+    ]
     if not levels:
         return
     contours = ax.contour(
         np.arange(data.shape[1]),
         np.arange(data.shape[0]),
         filled,
-        levels=levels,
-        colors="white",
-        linewidths=0.75,
-        alpha=0.85,
+        levels     = levels,
+        colors     = "white",
+        linewidths = 0.75,
+        alpha      = 0.85,
     )
     ax.clabel(contours, inline=True, fontsize=6.8, fmt="%.2f")
 
@@ -229,7 +255,15 @@ def annotate_cells(ax, data: np.ndarray, counts: np.ndarray) -> None:
             if counts[y, x] <= 0 or not np.isfinite(data[y, x]):
                 continue
             color = "white" if data[y, x] < 0.965 else "black"
-            ax.text(x, y, f"{data[y, x]:.2f}\nn={counts[y, x]}", ha="center", va="center", fontsize=6.3, color=color)
+            ax.text(
+                x,
+                y,
+                f"{data[y, x]:.2f}\nn={counts[y, x]}",
+                ha       = "center",
+                va       = "center",
+                fontsize = 6.3,
+                color    = color,
+            )
 
 
 def plot_parameter_cells(
@@ -240,25 +274,35 @@ def plot_parameter_cells(
     threshold: float | None = None,
 ) -> None:
     """画某个参数的 recall/precision-proxy 热图，一次输出 raw8 和 packed2。"""
-    bins = spec["bins"]
+    bins   = spec["bins"]
     labels = spec.get("labels")
     for quant in QUANTIZATIONS:
         recall, counts = metric_matrix(cells, quant, "recall", bins)
-        precision, _ = metric_matrix(cells, quant, "precision_proxy", bins)
-        fig, axes = plt.subplots(1, 2, figsize=(9, 4), constrained_layout=False)
+        precision, _   = metric_matrix(cells, quant, "precision_proxy", bins)
+        fig, axes      = plt.subplots(1, 2, figsize=(9, 4), constrained_layout=False)
         for ax, data, title, cbar_label in [
             (axes[0], recall, "Recall", "recall"),
             (axes[1], precision, "Precision proxy", "precision proxy"),
         ]:
             finite = data[np.isfinite(data)]
-            vmin = 0.0 if threshold is not None and finite.size and np.nanmin(finite) < 0.9 else 0.9
-            image = ax.imshow(data, origin="lower", vmin=vmin, vmax=1.0, cmap=MAKO_LIKE, aspect="auto")
+            vmin = (
+                0.0
+                if threshold is not None and finite.size and np.nanmin(finite) < 0.9
+                else 0.9
+            )
+            image = ax.imshow(
+                data, origin="lower", vmin=vmin, vmax=1.0, cmap=MAKO_LIKE, aspect="auto"
+            )
             ax.set_title(title, fontsize=11)
-            ax.set_xticks(np.arange(len(SNR_BINS) - 1))
-            ax.set_xticklabels(labels_for_bins(SNR_BINS), rotation=35, ha="right")
+            ax.set_xticks(np.arange(len(FLUENCE_SNR_BINS) - 1))
+            ax.set_xticklabels(
+                labels_for_bins(FLUENCE_SNR_BINS),
+                rotation = 35,
+                ha       = "right",
+            )
             ax.set_yticks(np.arange(len(bins) - 1))
             ax.set_yticklabels(labels_for_bins(bins, labels))
-            ax.set_xlabel("Injected fluence S/N")
+            ax.set_xlabel("Injected fluence S/N (matched-filter sigma)")
             ax.set_ylabel(spec["label"])
             annotate_cells(ax, data, counts)
             draw_contours(ax, data)
@@ -277,62 +321,96 @@ def plot_parameter_cells(
         plt.close(fig)
 
 
-def snr_rows_from_matches(matches: list[dict], false_positives: list[dict]) -> list[dict]:
-    """把 source 级 matches 和误报事件压成按 S/N 分箱的折线图输入。"""
+def snr_rows_from_matches(
+    matches: list[dict], false_positives: list[dict]
+) -> list[dict]:
+    """把 source 级 matches 和误报事件压成按 fluence S/N 分箱的折线图输入。"""
+    injected: Counter[tuple[str, int]]       = Counter()
+    detected: Counter[tuple[str, int]]       = Counter()
+    false_positive: Counter[tuple[str, int]] = Counter()
+    for row in matches:
+        quant = str(row.get("quantization", ""))
+        if quant not in QUANTIZATIONS:
+            continue
+        index = bin_index(float(row["fluence_snr"]), FLUENCE_SNR_BINS)
+        if index is None:
+            continue
+        injected[(quant, index)] += 1
+        if bool(row.get("detected")):
+            detected[(quant, index)] += 1
+    for row in false_positives:
+        quant = str(row.get("assigned_quantization", ""))
+        value = row.get("assigned_fluence_snr")
+        if quant not in QUANTIZATIONS or value in ("", None):
+            continue
+        index = bin_index(float(value), FLUENCE_SNR_BINS)
+        if index is not None:
+            false_positive[(quant, index)] += 1
+
     rows = []
     for quant in QUANTIZATIONS:
-        q_matches = [row for row in matches if row.get("quantization") == quant]
-        q_fp = [row for row in false_positives if row.get("assigned_quantization") == quant]
-        for x, (lo, hi) in enumerate(zip(SNR_BINS[:-1], SNR_BINS[1:])):
-            subset = [row for row in q_matches if bin_index(float(row["snr"]), SNR_BINS) == x]
-            fp_subset = [
-                row
-                for row in q_fp
-                if row.get("assigned_snr") not in ("", None)
-                and bin_index(float(row["assigned_snr"]), SNR_BINS) == x
-            ]
-            total = len(subset)
-            detected = sum(1 for row in subset if bool(row.get("detected")))
-            fp_count = len(fp_subset)
+        for x, (lo, hi) in enumerate(zip(FLUENCE_SNR_BINS[:-1], FLUENCE_SNR_BINS[1:])):
+            total    = injected[(quant, x)]
+            found    = detected[(quant, x)]
+            fp_count = false_positive[(quant, x)]
             rows.append(
                 {
                     "quantization": quant,
-                    "snr_low": lo,
-                    "snr_high": hi,
-                    "snr_center": math.sqrt(lo * hi),
+                    "fluence_snr_low": lo,
+                    "fluence_snr_high": hi,
+                    "fluence_snr_center": math.sqrt(lo * hi),
                     "n_injected": total,
-                    "n_detected": detected,
+                    "n_detected": found,
                     "n_false_positive_assigned": fp_count,
-                    "recall": detected / total if total else np.nan,
-                    "precision_proxy": detected / (detected + fp_count) if detected + fp_count else np.nan,
+                    "recall": found / total if total else np.nan,
+                    "precision_proxy": (
+                        found / (found + fp_count) if found + fp_count else np.nan
+                    ),
                 }
             )
     return rows
 
 
-def plot_snr_rows(snr_rows: list[dict], out_dir: Path, threshold: float | None = None) -> None:
-    """画 PRESTO recall/precision-proxy 随注入 S/N 的摘要折线图。"""
-    colors = {"raw8": "#0072B2", "packed2": "#D55E00"}
+def plot_snr_rows(
+    snr_rows: list[dict], out_dir: Path, threshold: float | None = None
+) -> None:
+    """画 PRESTO recall/precision-proxy 随注入 fluence S/N 的摘要折线图。"""
+    colors    = {"raw8": "#0072B2", "packed2": "#D55E00"}
     fig, axes = plt.subplots(1, 2, figsize=(9, 4))
-    for metric, ax, ylabel in [("recall", axes[0], "Recall"), ("precision_proxy", axes[1], "Precision proxy")]:
+    for metric, ax, ylabel in [
+        ("recall", axes[0], "Recall"),
+        ("precision_proxy", axes[1], "Precision proxy"),
+    ]:
         for quant in QUANTIZATIONS:
             part = [row for row in snr_rows if row["quantization"] == quant]
-            ax.plot([row["snr_center"] for row in part], [row[metric] for row in part], marker="o", color=colors[quant], label=quant)
+            ax.plot(
+                [row["fluence_snr_center"] for row in part],
+                [row[metric] for row in part],
+                marker = "o",
+                color  = colors[quant],
+                label  = quant,
+            )
         ax.set_xscale("log")
         ax.set_ylim(0.0, 1.02)
-        ax.set_xticks(SNR_BINS)
-        ax.set_xticklabels([f"{x:g}" for x in SNR_BINS], rotation=35, ha="right")
-        ax.set_xlabel("Injected fluence S/N")
+        ax.set_xticks(FLUENCE_SNR_BINS)
+        ax.set_xticklabels(
+            [f"{x:g}" for x in FLUENCE_SNR_BINS],
+            rotation = 35,
+            ha       = "right",
+        )
+        ax.set_xlabel("Injected fluence S/N (matched-filter sigma)")
         ax.set_ylabel(ylabel)
         ax.legend(frameon=False)
         clean_axes(ax)
     if threshold is None:
-        title = "PRESTO blind-search source-level performance versus S/N"
+        title = "PRESTO blind-search source-level performance versus fluence S/N"
     else:
         title = f"PRESTO blind-search performance, sigma >= {threshold:g}"
     fig.suptitle(title, fontsize=12.5, y=0.98)
     fig.tight_layout(rect=[0, 0, 1, 0.93])
     out_dir.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_dir / "snr_recall_precision.png", dpi=300)
-    fig.savefig(out_dir / "snr_recall_precision.pdf")
+    fig.savefig(out_dir / "fluence_snr_recall_precision.png", dpi=300)
+    fig.savefig(out_dir / "fluence_snr_recall_precision.pdf")
     plt.close(fig)
+
+# fmt: on

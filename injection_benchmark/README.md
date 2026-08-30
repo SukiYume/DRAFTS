@@ -23,7 +23,7 @@ generate_injections.py
 | --- | --- |
 | `run_campaign.py` | 注入评估主控脚本，负责分 batch 生成、搜索、分析和汇总。 |
 | `generate_injections.py` | 生成注入后的 raw8/packed2 FITS 和 `truth_manifest.jsonl`。 |
-| `injection_model.py` | 注入用动态谱基本函数：高斯频率包络、散射高斯时间 profile 和色散延迟常数。参数采样在 `generate_injections.py` 中完成。 |
+| `injection_model.py` | 注入用动态谱基本函数：高斯频率包络、散射高斯时间 profile、色散延迟常数和 fluence S/N 归一化。参数采样在 `generate_injections.py` 中完成。 |
 | `launch_search.py` | 单 batch 的 DRAFTS 多 section 搜索封装，调用 `search_runtime/`。 |
 | `evaluate_results.py` | 读取 truth 与候选表，做 source/event 匹配和误报统计。 |
 | `aggregate_results.py` | 汇总多个 batch 的分析结果。 |
@@ -53,9 +53,14 @@ downsample 和物理 TOA-DM 去重接口。同步生产搜索改动后运行 cam
 | 频率包络 | 高斯包络，`sigma_freq_mhz = bandwidth_mhz_fwhm / 2.355`。中心频率在观测带均匀抽样，带外尾部由有限观测带截断。 |
 | 时间轮廓 | `sigma_time_ms = width_ms_fwhm / 2.355`。无散射或散射很弱时为纯高斯；其余情况使用峰值归一的 ex-Gaussian 散射 profile。 |
 | 散射频率标度 | `tau(f) = tau_1ghz * (f/1000 MHz)^-4`。truth 中同时保存 `scattering_ms_at_1ghz` 和最高频处的 `scattering_ms_at_highest_freq`。 |
-| 单通道幅度 | `per_channel_peak_snr = snr / sqrt(effective_channels_fwhm)`，其中 `effective_channels_fwhm` 是频率包络大于 0.5 的通道数。 |
+| Fluence S/N | 对白化后的二维模板 `T(c,t) = E(c) * P(c,t)` 计算 `template_l2_norm = sqrt(sum(T^2))`。`fluence_snr` 定义为该模板的理想匹配滤波 S/N。 |
+| 单通道峰值幅度 | `per_channel_peak_snr = fluence_snr / template_l2_norm`。这一归一化同时计入时间宽度、散射拖尾、频率包络和观测带边界截断。 |
 | raw8 注入 | `per_channel_peak_snr * frequency_envelope * pulse_profile * channel_std` 加到 Stokes-I 背景上，四舍五入并 clip 到 `[0,255]`。 |
 | packed2 注入 | 先在 raw8/Stokes-I 空间累加同一模型，再按频率通道量化成 2-bit packed 输出。 |
+
+在各通道噪声独立且经 `channel_std` 白化为单位方差的条件下，
+`sqrt(sum((injected_signal / channel_std)^2)) = fluence_snr`。因此相同的
+`fluence_snr` 对不同脉宽、散射和带宽具有统一含义。
 
 ## 参数范围和分布
 
@@ -64,7 +69,7 @@ downsample 和物理 TOA-DM 去重接口。同步生产搜索改动后运行 cam
 | 参数 | 范围 | 分布 |
 | --- | --- | --- |
 | `dm_pc_cm3` | `[100, 2000]` | Latin-hypercube 分层均匀分布。 |
-| `snr` | `[5, 100]` | Latin-hypercube 分层对数均匀分布。 |
+| `fluence_snr` | `[3, 100] sigma` | Latin-hypercube 分层对数均匀分布；数值为白化二维模板的理想匹配滤波 S/N。 |
 | `width_ms_fwhm` | `[1, 20] ms` | Latin-hypercube 分层对数均匀分布。 |
 | `bandwidth_mhz_fwhm` | `[50, 500] MHz` | Latin-hypercube 分层对数均匀分布。 |
 | `scattering_ms_at_1ghz` | `0` 或 `[0.03, 10] ms` | 15% 精确为 `0`；其余 Latin-hypercube 分层对数均匀分布。 |
@@ -76,7 +81,11 @@ TOA 放置最多尝试 1024 次。给定窗口、注入数量、边界 guard 和
 减少底层 `--count`（campaign 入口为
 `--count-per-batch`），或显式调整间距参数。
 
-每个 raw8/packed2 输出目录都会写 `run_config.json` 和 `truth_manifest.jsonl`。`run_config.json` 记录参数范围和分布，`truth_manifest.jsonl` 记录每个注入源的实际 DM、S/N、宽度、带宽、中心频率、散射、TOA 和 per-channel 幅度。
+每个 raw8/packed2 输出目录都会写 `run_config.json` 和 `truth_manifest.jsonl`。
+`run_config.json` 记录参数范围、分布和 fluence S/N 定义；`truth_manifest.jsonl`
+记录每个注入源的实际 DM、`fluence_snr`、宽度、带宽、中心频率、散射、TOA，
+以及 `template_l2_norm`、`frequency_integrated_peak_snr` 和
+`per_channel_peak_snr` 等诊断量。
 
 ## 权重和 runtime
 
@@ -198,7 +207,7 @@ truth 输入顺序，并保留可达到的最大召回。
   `INJECTION_SIM_ROOT` 和 `INJECTION_TRUTH_ROOT` 可分别覆盖运行、注入数据和 truth
   目录。
 - 注入 FITS 体积很大。只有需要复用同一批注入数据做模型对比时才使用 `--keep-injected-fits`。
-- `--search-only` 依赖 `simdata/` 和 `truth_archive/` 中已有的注入数据；换 `--run-label` 前先确认对应 campaign 已生成。
+- `--search-only` 依赖 `simdata/` 和 `truth_archive/` 中已有的注入数据；truth manifest 需要包含当前生成器写出的 `fluence_snr` 字段。
 - `--overwrite-search` 只用于替换搜索、分析和汇总产物；它不负责重新生成注入 truth。
 - PRESTO 基线的环境要求、完整 blind-search 命令和阈值扫描见
   [`presto_runtime/README.md`](presto_runtime/README.md)。

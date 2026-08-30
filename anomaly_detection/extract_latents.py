@@ -1,232 +1,217 @@
-"""
-VAE 潜变量提取与可视化 (UMAP/t-SNE)
+# fmt: off
 
-Usage:
-    python extract_latents.py \
-        --h5_path ./data.h5 \
-        --model_path ./outputs/best.pth \
-        --encoder convnext \
-        --method umap
-"""
+"""Extract VAE latent means and create a UMAP or t-SNE visualization."""
 
-import sys
 import argparse
+import os
+import sys
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from dataset_h5 import H5RadioDataset
+from models import VariationalRadioAutoencoder, compute_anomaly_scores
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-import matplotlib.pyplot as plt
-
-from models import VariationalRadioAutoencoder
-from dataset_h5 import H5RadioDataset
-
-try:
-    import umap
-    HAS_UMAP = True
-except ImportError:
-    HAS_UMAP = False
-    print("Warning: umap-learn not installed. Use `pip install umap-learn`")
-
-try:
-    from sklearn.manifold import TSNE
-    HAS_TSNE = True
-except ImportError:
-    HAS_TSNE = False
-    print("Warning: sklearn not installed for t-SNE")
 
 
-def extract_latents(model, loader, device):
-    """提取所有样本的潜变量"""
+def extract_latents(model, loader, device, beta):
+    """Return pooled latent means and anomaly scores in loader order."""
     model.eval()
-
-    all_latents = []
-    all_scores = []
+    latent_batches = []
+    score_batches  = []
 
     with torch.no_grad():
         for batch in tqdm(loader, desc="Extracting latents", ascii=True):
-            data = batch.to(device, non_blocking=True)
+            data                       = batch.to(device, non_blocking=True)
+            reconstruction, mu, logvar = model(data)
+            latent_batches.append(mu.mean(dim=(2, 3)).cpu().numpy())
+            scores, _, _ = compute_anomaly_scores(
+                reconstruction,
+                data,
+                mu,
+                logvar,
+                beta,
+            )
+            score_batches.append(scores.cpu().numpy())
 
-            # 提取潜变量 (全局平均池化)
-            z = model.encode(data, pool='gap')  # [B, latent_ch]
-            all_latents.append(z.cpu().numpy())
-
-            # 计算异常分数
-            score = model.get_anomaly_score(data, beta=0.1)
-            all_scores.append(score.cpu().numpy())
-
-    latents = np.concatenate(all_latents, axis=0)  # [N, latent_ch]
-    scores = np.concatenate(all_scores, axis=0)    # [N]
-
-    return latents, scores
+    return np.concatenate(latent_batches), np.concatenate(score_batches)
 
 
-def reduce_dimensions(latents, method='umap', n_components=2, random_state=42):
-    """降维到 2D"""
-    print(f"Reducing dimensions with {method.upper()}...")
-
-    if method == 'umap':
-        if not HAS_UMAP:
-            raise ImportError("umap-learn not installed")
-        reducer = umap.UMAP(
-            n_components=n_components,
-            n_neighbors=15,
-            min_dist=0.1,
-            metric='euclidean',
-            random_state=random_state,
+def reduce_dimensions(latents, method="umap", random_state=42):
+    """Reduce latent vectors to two dimensions."""
+    sample_count = latents.shape[0]
+    if sample_count < 3:
+        raise ValueError(
+            "At least three samples are required for dimensionality reduction"
         )
-    elif method == 'tsne':
-        if not HAS_TSNE:
-            raise ImportError("sklearn not installed")
+
+    print(f"Reducing dimensions with {method.upper()}...")
+    if method == "umap":
+        try:
+            import umap
+        except ImportError as error:
+            raise ImportError("Install umap-learn to use UMAP") from error
+        reducer = umap.UMAP(
+            n_components = 2,
+            n_neighbors  = min(15, sample_count - 1),
+            min_dist     = 0.1,
+            metric       = "euclidean",
+            random_state = random_state,
+            init         = "random",
+        )
+    elif method == "tsne":
+        try:
+            from sklearn.manifold import TSNE
+        except ImportError as error:
+            raise ImportError("Install scikit-learn to use t-SNE") from error
         reducer = TSNE(
-            n_components=n_components,
-            perplexity=30,
-            random_state=random_state,
+            n_components = 2,
+            perplexity   = min(30, sample_count - 1),
+            random_state = random_state,
         )
     else:
         raise ValueError(f"Unknown method: {method}")
-
-    embedding = reducer.fit_transform(latents)
-    return embedding
+    return reducer.fit_transform(latents)
 
 
-def visualize(embedding, scores, output_path=None, title="Latent Space"):
-    """可视化降维结果"""
-    fig, ax = plt.subplots(figsize=(10, 8))
-
-    # 按分数着色
-    scatter = ax.scatter(
+def visualize(embedding, scores, output_path, title="Latent space"):
+    """Save a score-colored two-dimensional latent-space plot."""
+    figure, axis = plt.subplots(figsize=(10, 8))
+    scatter = axis.scatter(
         embedding[:, 0],
         embedding[:, 1],
-        c=scores,
-        cmap='viridis',
-        s=5,
-        alpha=0.7,
+        c     = scores,
+        cmap  = "viridis",
+        s     = 5,
+        alpha = 0.7,
     )
+    figure.colorbar(scatter, ax=axis, label="Anomaly score")
+    axis.set_xlabel("Component 1")
+    axis.set_ylabel("Component 2")
+    axis.set_title(title)
 
-    plt.colorbar(scatter, ax=ax, label='Anomaly Score')
-    ax.set_xlabel('Component 1')
-    ax.set_ylabel('Component 2')
-    ax.set_title(title)
-
-    # 标记高分异常点
-    threshold = np.percentile(scores, 95)
+    threshold    = np.percentile(scores, 95)
     anomaly_mask = scores > threshold
-    if anomaly_mask.sum() > 0:
-        ax.scatter(
+    if anomaly_mask.any():
+        axis.scatter(
             embedding[anomaly_mask, 0],
             embedding[anomaly_mask, 1],
-            c='red',
-            s=20,
-            marker='x',
-            label=f'Top 5% anomalies (n={anomaly_mask.sum()})',
+            color  = "red",
+            s      = 20,
+            marker = "x",
+            label  = f"Top 5% (n={anomaly_mask.sum()})",
         )
-        ax.legend()
+        axis.legend()
 
-    plt.tight_layout()
-
-    if output_path:
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        print(f"Saved: {output_path}")
-
-    plt.show()
+    figure.tight_layout()
+    figure.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"Saved: {output_path}")
 
 
 def main(args):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Device: {device}")
+    if not os.path.isfile(args.model_path):
+        raise FileNotFoundError(f"Model weights not found: {args.model_path}")
+    if min(args.batch_size, args.latent_dim) <= 0:
+        raise ValueError("batch_size and latent_dim must be positive")
+    if args.num_workers < 0:
+        raise ValueError("num_workers cannot be negative")
+    if args.kl_weight < 0:
+        raise ValueError("kl_weight cannot be negative")
 
-    # 输出目录
+    device     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Device: {device}")
 
-    # ========== 加载数据 ==========
-    print(f"\n[Step 1] Loading data: {args.h5_path}")
-    dataset = H5RadioDataset(args.h5_path, return_meta=False)
-    print(f"Samples: {len(dataset)}")
-
+    dataset = H5RadioDataset(args.h5_path)
     loader = DataLoader(
         dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        pin_memory=True,
+        batch_size         = args.batch_size,
+        shuffle            = False,
+        num_workers        = args.num_workers,
+        pin_memory         = device.type == "cuda",
+        persistent_workers = args.num_workers > 0,
     )
-
-    # ========== 加载模型 ==========
-    print(f"\n[Step 2] Loading VAE model: {args.model_path}")
+    print(f"Samples: {len(dataset)}")
 
     model = VariationalRadioAutoencoder(
-        pretrained=False,
-        latent_ch=args.latent_dim,
-        encoder_name=args.encoder,
+        pretrained   = False,
+        latent_ch    = args.latent_dim,
+        encoder_name = args.encoder,
     )
-
-    state = torch.load(args.model_path, map_location=device)
-    if isinstance(state, dict) and "model_state_dict" in state:
-        state = state["model_state_dict"]
-    model.load_state_dict(state, strict=True)
+    checkpoint = torch.load(
+        args.model_path,
+        map_location = device,
+        weights_only = True,
+    )
+    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+        config = checkpoint.get("model_config", {})
+        expected = {
+            "model": "vae",
+            "encoder": args.encoder,
+            "latent_dim": args.latent_dim,
+        }
+        mismatches = {
+            key: (config[key], value)
+            for key, value in expected.items()
+            if key in config and config[key] != value
+        }
+        if mismatches:
+            raise ValueError(f"Checkpoint configuration mismatch: {mismatches}")
+        checkpoint = checkpoint["model_state_dict"]
+    model.load_state_dict(checkpoint, strict=True)
     model = model.to(device)
     model.eval()
 
-    print(f"Model: VAE + {args.encoder.upper()}, Latent: {args.latent_dim}")
-
-    # ========== 提取潜变量 ==========
-    print("\n[Step 3] Extracting latent vectors...")
-    latents, scores = extract_latents(model, loader, device)
-    print(f"Latents shape: {latents.shape}")
-    print(f"Scores - Mean: {scores.mean():.6f}, Std: {scores.std():.6f}")
-
-    # 保存潜变量
-    np.savez(
-        output_dir / "latents.npz",
-        latents=latents,
-        scores=scores,
+    latents, scores = extract_latents(
+        model,
+        loader,
+        device,
+        beta=args.kl_weight,
     )
-    print(f"Saved: {output_dir / 'latents.npz'}")
+    print(f"Latents: {latents.shape}")
+    print(f"Scores: mean={scores.mean():.6f}, std={scores.std():.6f}")
+    np.savez(output_dir / "latents.npz", latents=latents, scores=scores)
 
-    # ========== 降维 ==========
-    print(f"\n[Step 4] Dimensionality reduction ({args.method})...")
-    embedding = reduce_dimensions(latents, method=args.method)
-
-    # ========== 可视化 ==========
-    print("\n[Step 5] Visualizing...")
+    embedding = reduce_dimensions(
+        latents,
+        method       = args.method,
+        random_state = args.seed,
+    )
     visualize(
         embedding,
         scores,
-        output_path=output_dir / f"latent_space_{args.method}.png",
-        title=f"VAE Latent Space ({args.method.upper()})",
+        output_dir / f"latent_space_{args.method}.png",
+        title=f"VAE latent space ({args.method.upper()})",
     )
-
-    # 保存降维结果
     np.savez(
         output_dir / f"embedding_{args.method}.npz",
-        embedding=embedding,
-        scores=scores,
+        embedding = embedding,
+        scores    = scores,
     )
-
-    print("\nDone!")
+    print(f"Done: {output_dir}")
     return 0
 
 
-if __name__ == '__main__':
-    p = argparse.ArgumentParser(description='VAE Latent Space Visualization')
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--h5_path", required=True)
+    parser.add_argument("--model_path", required=True)
+    parser.add_argument(
+        "--encoder",
+        default = "convnext",
+        choices = ["convnext", "resnet18"],
+    )
+    parser.add_argument("--latent_dim", type=int, default=128)
+    parser.add_argument("--kl_weight", type=float, default=0.1)
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--method", default="umap", choices=["umap", "tsne"])
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--output_dir", default="./latent_analysis")
+    sys.exit(main(parser.parse_args()))
 
-    # Input
-    p.add_argument('--h5_path', type=str, required=True, help='Path to H5 file')
-
-    # Model
-    p.add_argument('--model_path', type=str, required=True, help='Path to VAE model weights')
-    p.add_argument('--encoder', type=str, default='convnext', choices=['convnext', 'resnet18'])
-    p.add_argument('--latent_dim', type=int, default=128, help='VAE latent channels')
-
-    # Inference
-    p.add_argument('--batch_size', type=int, default=32)
-    p.add_argument('--num_workers', type=int, default=4)
-
-    # Visualization
-    p.add_argument('--method', type=str, default='umap', choices=['umap', 'tsne'])
-    p.add_argument('--output_dir', type=str, default='./latent_analysis')
-
-    sys.exit(main(p.parse_args()))
+# fmt: on

@@ -1,115 +1,95 @@
-#!/bin/bash
-# Training script for Radio Anomaly Detection (HDF5 version)
-#
-# Usage: bash train.sh
+#!/usr/bin/env bash
+set -euo pipefail
 
-# ==================== 配置参数 ====================
-
+# Edit this compact configuration block before launching a run.
 H5_PATH="./FRB20220912A_PrepData.h5"
-DOWN_TIMES="8 16 32 64 128 256"
+DOWN_TIMES=(8 16 32 64 128 256)
+MODEL="vae"                 # ae or vae
+ENCODER="convnext"         # convnext or resnet18
+PRED_MODE=false             # predict x[t] from x[t-1]
+USE_PRETRAINED=false
+USE_AUGMENTATION=true
 
+CUDA_VISIBLE_DEVICES="0,1,2,3"
 EPOCHS=50
 BATCH_SIZE=32
-LR=1e-4
-MODEL="vae"          # ae 或 vae
-ENCODER="convnext"
-PRED_MODE=false     # 是否使用预测模式 (f(x_t-1) = x_t)
-
-# GPU 配置
-CUDA_VISIBLE_DEVICES="0,1,2,3"  # 指定使用哪几张卡
-NUM_GPUS=4                        # GPU 数量需要与上面指定的卡数一致
+LEARNING_RATE=1e-4
 OUTPUT_DIR="./outputs"
-NUM_WORKERS=16
+NUM_WORKERS=8
 WARMUP_EPOCHS=2
 
-# VAE 专用参数
+LATENT_DIM=128
 KL_WEIGHT=0.05
 KL_WARMUP_EPOCHS=5
 
-# ==================== 构建参数 ====================
-
-PRED_FLAG=""
-if [ "$PRED_MODE" = true ]; then
-    PRED_FLAG="--pred"
+if [[ ! -f "$H5_PATH" ]]; then
+    echo "Error: HDF5 file not found: $H5_PATH" >&2
+    echo "Create it with prepare_data.py before training." >&2
+    exit 1
 fi
-
-# ==================== 运行训练 ====================
-
-echo "============================================"
-echo "Radio Anomaly Detection Training (HDF5)"
-echo "============================================"
-echo "H5 Path:    $H5_PATH"
-echo "Down times: $DOWN_TIMES"
-echo "Model:      $MODEL"
-echo "Pred mode:  $PRED_MODE"
-echo "Encoder:    $ENCODER"
-echo "GPUs:       $NUM_GPUS"
-echo "Batch:      $BATCH_SIZE x $NUM_GPUS = $((BATCH_SIZE * NUM_GPUS))"
-echo "Epochs:     $EPOCHS"
-echo "============================================"
-
-if [ ! -f "$H5_PATH" ]; then
-    echo "Error: H5 file not found: $H5_PATH"
-    echo "Run: python prepare_data.py first"
+if [[ "$MODEL" != "ae" && "$MODEL" != "vae" ]]; then
+    echo "Error: MODEL must be ae or vae" >&2
+    exit 1
+fi
+if [[ "$ENCODER" != "convnext" && "$ENCODER" != "resnet18" ]]; then
+    echo "Error: ENCODER must be convnext or resnet18" >&2
     exit 1
 fi
 
-if [ $NUM_GPUS -gt 1 ]; then
-    echo "Starting DDP training with $NUM_GPUS GPUs..."
-    echo "Using GPUs: $CUDA_VISIBLE_DEVICES"
-
-    if [ "$MODEL" = "vae" ]; then
-        CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES torchrun --standalone --nproc_per_node=$NUM_GPUS train_ddp.py \
-            --no_pretrained \
-            --h5_path "$H5_PATH" \
-            --down_times $DOWN_TIMES \
-            --model vae \
-            --encoder $ENCODER \
-            $PRED_FLAG \
-            --epochs $EPOCHS \
-            --warmup_epochs $WARMUP_EPOCHS \
-            --batch_size $BATCH_SIZE \
-            --lr $LR \
-            --kl_weight $KL_WEIGHT \
-            --kl_warmup_epochs $KL_WARMUP_EPOCHS \
-            --output_dir "$OUTPUT_DIR" \
-            --num_workers $NUM_WORKERS \
-            --augment
-    else
-        CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES torchrun --standalone --nproc_per_node=$NUM_GPUS train_ddp.py \
-            --no_pretrained \
-            --h5_path "$H5_PATH" \
-            --down_times $DOWN_TIMES \
-            --model ae \
-            --encoder $ENCODER \
-            $PRED_FLAG \
-            --epochs $EPOCHS \
-            --warmup_epochs $WARMUP_EPOCHS \
-            --batch_size $BATCH_SIZE \
-            --lr $LR \
-            --output_dir "$OUTPUT_DIR" \
-            --num_workers $NUM_WORKERS \
-            --augment
-    fi
-else
-    echo "Starting single GPU training..."
-    echo "Using GPU: $CUDA_VISIBLE_DEVICES"
-    CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES python train_ddp.py \
-        --h5_path "$H5_PATH" \
-        --down_times $DOWN_TIMES \
-        --model $MODEL \
-        --encoder $ENCODER \
-        $PRED_FLAG \
-        --epochs $EPOCHS \
-        --warmup_epochs $WARMUP_EPOCHS \
-        --batch_size $BATCH_SIZE \
-        --lr $LR \
-        --output_dir "$OUTPUT_DIR" \
-        --num_workers $NUM_WORKERS \
-        --augment
+IFS=',' read -r -a GPU_IDS <<< "$CUDA_VISIBLE_DEVICES"
+NUM_GPUS=${#GPU_IDS[@]}
+if (( NUM_GPUS == 0 )); then
+    echo "Error: CUDA_VISIBLE_DEVICES must list at least one GPU" >&2
+    exit 1
 fi
 
-echo "============================================"
-echo "Training complete!"
-echo "Output: $OUTPUT_DIR"
-echo "============================================"
+TRAIN_ARGS=(
+    train_ddp.py
+    --h5_path "$H5_PATH"
+    --down_times "${DOWN_TIMES[@]}"
+    --model "$MODEL"
+    --encoder "$ENCODER"
+    --epochs "$EPOCHS"
+    --warmup_epochs "$WARMUP_EPOCHS"
+    --batch_size "$BATCH_SIZE"
+    --lr "$LEARNING_RATE"
+    --output_dir "$OUTPUT_DIR"
+    --num_workers "$NUM_WORKERS"
+)
+
+if [[ "$USE_PRETRAINED" == false ]]; then
+    TRAIN_ARGS+=(--no_pretrained)
+fi
+if [[ "$USE_AUGMENTATION" == true ]]; then
+    TRAIN_ARGS+=(--augment)
+fi
+if [[ "$PRED_MODE" == true ]]; then
+    TRAIN_ARGS+=(--pred)
+fi
+if [[ "$MODEL" == "vae" ]]; then
+    TRAIN_ARGS+=(
+        --latent_dim "$LATENT_DIM"
+        --kl_weight "$KL_WEIGHT"
+        --kl_warmup_epochs "$KL_WARMUP_EPOCHS"
+    )
+fi
+
+echo "============================================================"
+echo "Radio anomaly training"
+echo "HDF5:      $H5_PATH"
+echo "Down time: ${DOWN_TIMES[*]}"
+echo "Mode:      $MODEL (prediction=$PRED_MODE)"
+echo "Encoder:   $ENCODER (pretrained=$USE_PRETRAINED)"
+echo "GPUs:      $CUDA_VISIBLE_DEVICES"
+echo "Batch:     $BATCH_SIZE x $NUM_GPUS = $((BATCH_SIZE * NUM_GPUS))"
+echo "Epochs:    $EPOCHS"
+echo "============================================================"
+
+export CUDA_VISIBLE_DEVICES
+if (( NUM_GPUS > 1 )); then
+    torchrun --standalone --nproc_per_node="$NUM_GPUS" "${TRAIN_ARGS[@]}"
+else
+    python "${TRAIN_ARGS[@]}"
+fi
+
+echo "Training complete. Output root: $OUTPUT_DIR"

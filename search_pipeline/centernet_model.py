@@ -1,3 +1,4 @@
+# fmt: off
 """Center-only (CenterNet) detector：torchvision backbone + 多尺度融合到 stride-4 + 中心头。
 
 提供 backbone（``--backbone`` 传简称即可）：
@@ -18,12 +19,19 @@ import torchvision
 # 1. 低层工具
 # ---------------------------------------------------------------------------
 
+
 def convert_to_grayscale(conv):
     """将3通道卷积层转换为单通道，权重取RGB均值。"""
     new_conv = nn.Conv2d(
-        1, conv.out_channels, conv.kernel_size, conv.stride,
-        conv.padding, conv.dilation, conv.groups,
-        bias=(conv.bias is not None), padding_mode=conv.padding_mode,
+        1,
+        conv.out_channels,
+        conv.kernel_size,
+        conv.stride,
+        conv.padding,
+        conv.dilation,
+        conv.groups,
+        bias         = (conv.bias is not None),
+        padding_mode = conv.padding_mode,
     )
     with torch.no_grad():
         new_conv.weight.copy_(conv.weight.mean(dim=1, keepdim=True))
@@ -36,7 +44,9 @@ class ConvBNAct(nn.Module):
     def __init__(self, in_ch, out_ch, kernel=3, stride=1):
         super().__init__()
         self.block = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, kernel, stride=stride, padding=kernel // 2, bias=False),
+            nn.Conv2d(
+                in_ch, out_ch, kernel, stride=stride, padding=kernel // 2, bias=False
+            ),
             nn.BatchNorm2d(out_ch),
             nn.SiLU(inplace=True),
         )
@@ -48,6 +58,7 @@ class ConvBNAct(nn.Module):
 # ---------------------------------------------------------------------------
 # 2. backbone
 # ---------------------------------------------------------------------------
+
 
 class ResNet18Stages(nn.Module):
     """resnet18 stem(stride 4) + layer1..4，输出 4 阶段特征 (stride 4/8/16/32)。"""
@@ -62,7 +73,7 @@ class ResNet18Stages(nn.Module):
         self.stages = nn.ModuleList([m.layer1, m.layer2, m.layer3, m.layer4])
 
     def forward(self, x):
-        x = self.stem(x)
+        x     = self.stem(x)
         feats = []
         for stage in self.stages:
             x = stage(x)
@@ -78,15 +89,15 @@ class ConvNeXtStages(nn.Module):
     由 :class:`ConvNeXtTinyStages` / :class:`ConvNeXtSmallStages` 子类提供。
     """
 
-    channels = (96, 192, 384, 768)
-    model_fn = None
+    channels              = (96, 192, 384, 768)
+    model_fn              = None
     stochastic_depth_prob = None
 
     def __init__(self, pretrained):
         super().__init__()
         m = self.model_fn(
-            weights="IMAGENET1K_V1" if pretrained else None,
-            stochastic_depth_prob=self.stochastic_depth_prob,
+            weights               = "IMAGENET1K_V1" if pretrained else None,
+            stochastic_depth_prob = self.stochastic_depth_prob,
         )
         m.features[0][0] = convert_to_grayscale(m.features[0][0])
         self.features = m.features
@@ -101,12 +112,12 @@ class ConvNeXtStages(nn.Module):
 
 
 class ConvNeXtTinyStages(ConvNeXtStages):
-    model_fn = staticmethod(torchvision.models.convnext_tiny)
+    model_fn              = staticmethod(torchvision.models.convnext_tiny)
     stochastic_depth_prob = 0.25
 
 
 class ConvNeXtSmallStages(ConvNeXtStages):
-    model_fn = staticmethod(torchvision.models.convnext_small)
+    model_fn              = staticmethod(torchvision.models.convnext_small)
     stochastic_depth_prob = 0.4
 
 
@@ -120,6 +131,7 @@ BACKBONES = {
 # ---------------------------------------------------------------------------
 # 3. 检测头 + 顶层模型
 # ---------------------------------------------------------------------------
+
 
 class CenterHead(nn.Module):
     def __init__(self, ch):
@@ -146,24 +158,35 @@ class CenterNet(nn.Module):
         if pretrained:
             print(f"Loading ImageNet pretrained weights for {backbone}")
         self.backbone = BACKBONES[backbone](pretrained=pretrained)
-        self.proj = nn.ModuleList([nn.Conv2d(c, head_ch, 1, bias=False) for c in self.backbone.channels])
-        self.fuse = nn.Sequential(ConvBNAct(head_ch, head_ch), ConvBNAct(head_ch, head_ch))
+        self.proj = nn.ModuleList(
+            [nn.Conv2d(c, head_ch, 1, bias=False) for c in self.backbone.channels]
+        )
+        self.fuse = nn.Sequential(
+            ConvBNAct(head_ch, head_ch), ConvBNAct(head_ch, head_ch)
+        )
         self.head = CenterHead(head_ch)
 
     def forward(self, x):
-        feats = self.backbone(x)
+        feats       = self.backbone(x)
         target_size = feats[0].shape[-2:]
-        fused = self.proj[0](feats[0])
+        fused       = self.proj[0](feats[0])
         for proj, feat in zip(self.proj[1:], feats[1:]):
             fused = fused + F.interpolate(
-                proj(feat), size=target_size, mode="bilinear", align_corners=False,
+                proj(feat),
+                size          = target_size,
+                mode          = "bilinear",
+                align_corners = False,
             )
         return self.head(self.fuse(fused))
 
 
-def build_centernet_model(backbone="resnet18", pretrained=False, down_ratio=4, head_ch=128):
+def build_centernet_model(
+    backbone="resnet18", pretrained=False, down_ratio=4, head_ch=128
+):
     if down_ratio != 4:
-        raise ValueError(f"down_ratio 当前固定为 4（两类 backbone 的最浅特征均为 stride-4），收到 {down_ratio}")
+        raise ValueError(
+            f"down_ratio 当前固定为 4（两类 backbone 的最浅特征均为 stride-4），收到 {down_ratio}"
+        )
     return CenterNet(backbone=backbone, pretrained=pretrained, head_ch=head_ch)
 
 
@@ -171,11 +194,12 @@ def build_centernet_model(backbone="resnet18", pretrained=False, down_ratio=4, h
 # 4. 损失
 # ---------------------------------------------------------------------------
 
+
 def _transpose_and_gather_feat(feat, ind):
     """从 ``[B, C, H, W]`` 的特征里按展平索引 ``ind`` (``[B, N]``) 取出 ``N`` 个位置 → ``[B, N, C]``。"""
     batch, channels, height, width = feat.shape
     feat = feat.permute(0, 2, 3, 1).contiguous().view(batch, height * width, channels)
-    ind = ind.unsqueeze(2).expand(batch, ind.size(1), channels)
+    ind  = ind.unsqueeze(2).expand(batch, ind.size(1), channels)
     return feat.gather(1, ind)
 
 
@@ -183,18 +207,18 @@ def focal_loss(logits, target, pos_weight=1.0, neg_weight=1.0):
     """CornerNet/CenterNet 的 penalty-reduced focal loss（heatmap 用），按正样本数归一。"""
     # AMP/FP16 下 1 - 1e-4 会被舍入为 1.0，导致 log(1 - pred) 变成 -inf。
     # heatmap focal loss 对数值稳定性敏感，因此强制在 FP32 中计算。
-    logits = logits.float()
-    target = target.float()
-    pred = torch.sigmoid(logits).clamp(1e-4, 1 - 1e-4)
-    pos_inds = target.eq(1).float()
-    neg_inds = target.lt(1).float()
+    logits      = logits.float()
+    target      = target.float()
+    pred        = torch.sigmoid(logits).clamp(1e-4, 1 - 1e-4)
+    pos_inds    = target.eq(1).float()
+    neg_inds    = target.lt(1).float()
     neg_weights = torch.pow(1 - target, 4)
 
     pos_loss = torch.log(pred) * torch.pow(1 - pred, 2) * pos_inds
     neg_loss = torch.log(1 - pred) * torch.pow(pred, 2) * neg_weights * neg_inds
-    return -(
-        pos_weight * pos_loss.sum() + neg_weight * neg_loss.sum()
-    ) / torch.clamp(pos_inds.sum(), min=1.0)
+    return -(pos_weight * pos_loss.sum() + neg_weight * neg_loss.sum()) / torch.clamp(
+        pos_inds.sum(), min=1.0
+    )
 
 
 def offset_l1_loss(pred_offset, target_offset, mask, ind):
@@ -204,9 +228,18 @@ def offset_l1_loss(pred_offset, target_offset, mask, ind):
     return loss / torch.clamp(mask.sum(), min=1.0)
 
 
-def compute_loss(outputs, batch, hm_weight=1.0, offset_weight=1.0,
-                 hm_pos_weight=1.0, hm_neg_weight=1.0):
-    hm_loss = focal_loss(outputs["hm"], batch["hm"], hm_pos_weight, hm_neg_weight)
-    off_loss = offset_l1_loss(outputs["offset"], batch["offset"], batch["reg_mask"], batch["ind"])
+def compute_loss(
+    outputs,
+    batch,
+    hm_weight=1.0,
+    offset_weight=1.0,
+    hm_pos_weight=1.0,
+    hm_neg_weight=1.0,
+):
+    hm_loss  = focal_loss(outputs["hm"], batch["hm"], hm_pos_weight, hm_neg_weight)
+    off_loss = offset_l1_loss(
+        outputs["offset"], batch["offset"], batch["reg_mask"], batch["ind"]
+    )
     loss = hm_weight * hm_loss + offset_weight * off_loss
     return loss, {"hm": hm_loss.detach(), "offset": off_loss.detach()}
+# fmt: on

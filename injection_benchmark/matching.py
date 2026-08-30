@@ -1,3 +1,5 @@
+# fmt: off
+
 """Sparse maximum-cardinality, minimum-cost bipartite matching helpers."""
 
 from __future__ import annotations
@@ -25,12 +27,12 @@ def maximum_cardinality_min_cost_matching(
         return {}
 
     edge_cost: dict[tuple[int, int], float] = {}
-    left_to_right: dict[int, set[int]] = {}
-    right_to_left: dict[int, set[int]] = {}
+    left_to_right: dict[int, set[int]]      = {}
+    right_to_left: dict[int, set[int]]      = {}
     for left, right, cost in edges:
-        left = int(left)
+        left  = int(left)
         right = int(right)
-        cost = float(cost)
+        cost  = float(cost)
         if not (0 <= left < n_left and 0 <= right < n_right):
             raise IndexError(f"Matching edge ({left}, {right}) is out of bounds")
         if not np.isfinite(cost):
@@ -42,14 +44,14 @@ def maximum_cardinality_min_cost_matching(
         right_to_left.setdefault(right, set()).add(left)
 
     matched: dict[int, int] = {}
-    visited_left: set[int] = set()
+    visited_left: set[int]  = set()
     for start_left in sorted(left_to_right):
         if start_left in visited_left:
             continue
 
-        component_left: set[int] = set()
+        component_left: set[int]  = set()
         component_right: set[int] = set()
-        queue = deque([("left", start_left)])
+        queue                     = deque([("left", start_left)])
         while queue:
             side, vertex = queue.popleft()
             if side == "left":
@@ -57,16 +59,18 @@ def maximum_cardinality_min_cost_matching(
                     continue
                 component_left.add(vertex)
                 visited_left.add(vertex)
-                queue.extend(("right", right) for right in left_to_right.get(vertex, ()))
+                queue.extend(
+                    ("right", right) for right in left_to_right.get(vertex, ())
+                )
             else:
                 if vertex in component_right:
                     continue
                 component_right.add(vertex)
                 queue.extend(("left", left) for left in right_to_left.get(vertex, ()))
 
-        left_ids = sorted(component_left)
+        left_ids  = sorted(component_left)
         right_ids = sorted(component_right)
-        left_pos = {vertex: index for index, vertex in enumerate(left_ids)}
+        left_pos  = {vertex: index for index, vertex in enumerate(left_ids)}
         right_pos = {vertex: index for index, vertex in enumerate(right_ids)}
 
         component_costs = [
@@ -75,11 +79,11 @@ def maximum_cardinality_min_cost_matching(
             for right in left_to_right.get(left, ())
             if right in component_right and (left, right) in edge_cost
         ]
-        minimum = min(component_costs)
-        shift = -minimum if minimum < 0 else 0.0
-        maximum = max(cost + shift for cost in component_costs)
-        max_matches = min(len(left_ids), len(right_ids))
-        dummy_penalty = (maximum + 1.0) * (max_matches + 1)
+        minimum         = min(component_costs)
+        shift           = -minimum if minimum < 0 else 0.0
+        maximum         = max(cost + shift for cost in component_costs)
+        max_matches     = min(len(left_ids), len(right_ids))
+        dummy_penalty   = (maximum + 1.0) * (max_matches + 1)
         invalid_penalty = dummy_penalty * (len(left_ids) + 2)
 
         # Every left vertex receives its own dummy option. Paying one dummy
@@ -90,20 +94,24 @@ def maximum_cardinality_min_cost_matching(
             invalid_penalty,
             dtype=np.float64,
         )
-        cost_matrix[:, len(right_ids):] = dummy_penalty
+        cost_matrix[:, len(right_ids) :] = dummy_penalty
         for left in left_ids:
             for right in left_to_right.get(left, ()):
                 key = (left, right)
                 if right in right_pos and key in edge_cost:
-                    cost_matrix[left_pos[left], right_pos[right]] = edge_cost[key] + shift
+                    cost_matrix[left_pos[left], right_pos[right]] = (
+                        edge_cost[key] + shift
+                    )
 
         rows, columns = linear_sum_assignment(cost_matrix)
         for row, column in zip(rows, columns):
             if column >= len(right_ids):
                 continue
-            left = left_ids[int(row)]
+            left  = left_ids[int(row)]
             right = right_ids[int(column)]
             if (left, right) in edge_cost:
                 matched[left] = right
 
     return matched
+
+# fmt: on

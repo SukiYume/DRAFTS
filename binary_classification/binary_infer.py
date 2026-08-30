@@ -1,3 +1,5 @@
+# fmt: off
+
 """在全量数据集上跑 binary 分类器，输出每条样本的 ``label/pred/prob``，并打印准确率。
 
 ``--weights`` 既可以传训练得到的 ``best_model.pth``（raw），也可以传 ``best_model_ema.pth``
@@ -9,16 +11,15 @@ import os
 
 import pandas as pd
 import torch
-from torch.utils.data import DataLoader
-from tqdm import tqdm
-
 from binary_data import BurstDataset, build_catalog
 from binary_model import build_binary_model
-
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 # ---------------------------------------------------------------------------
 # 1. 设备 + 权重加载
 # ---------------------------------------------------------------------------
+
 
 def setup_device(args):
     if args.device == "cpu" or not torch.cuda.is_available():
@@ -40,6 +41,7 @@ def load_weights(model, weights, device):
 # 2. 推理：对整个 catalog 跑一遍，每条样本输出 (label, pred, prob_false, prob_true)
 # ---------------------------------------------------------------------------
 
+
 @torch.no_grad()
 def predict(model, loader, device):
     """返回与 catalog 行一一对应的 dict 列表（顺序与 DataLoader 一致）。"""
@@ -48,15 +50,19 @@ def predict(model, loader, device):
     for inputs, labels in tqdm(loader, dynamic_ncols=True, ascii=True, desc="Infer"):
         inputs = inputs.to(device, non_blocking=True)
         logits = model(inputs)
-        prob = torch.softmax(logits, dim=1)
-        pred = torch.argmax(prob, dim=1)
-        for label, p, pr in zip(labels.cpu().numpy(), pred.cpu().numpy(), prob.cpu().numpy()):
-            rows.append({
-                "label": int(label),
-                "pred": int(p),
-                "prob_false": float(pr[0]),
-                "prob_true": float(pr[1]),
-            })
+        prob   = torch.softmax(logits, dim=1)
+        pred   = torch.argmax(prob, dim=1)
+        for label, p, pr in zip(
+            labels.cpu().numpy(), pred.cpu().numpy(), prob.cpu().numpy()
+        ):
+            rows.append(
+                {
+                    "label": int(label),
+                    "pred": int(p),
+                    "prob_false": float(pr[0]),
+                    "prob_true": float(pr[1]),
+                }
+            )
     return rows
 
 
@@ -64,11 +70,15 @@ def predict(model, loader, device):
 # 3. 主流程
 # ---------------------------------------------------------------------------
 
+
 def main(args):
     device = setup_device(args)
     model = build_binary_model(
-        model_type=args.model_type, model_name=args.model_name,
-        num_classes=2, pretrained=False, dropout=args.dropout,
+        model_type  = args.model_type,
+        model_name  = args.model_name,
+        num_classes = 2,
+        pretrained  = False,
+        dropout     = args.dropout,
     ).to(device)
     load_weights(model, args.weights, device)
 
@@ -76,9 +86,12 @@ def main(args):
     # 与训练时的 val 数据流一致：单图加载、不做随机增强
     dataset = BurstDataset(catalog, val=True)
     loader = DataLoader(
-        dataset, batch_size=args.batch_size, shuffle=False,
-        num_workers=args.num_workers, pin_memory=torch.cuda.is_available(),
-        persistent_workers=args.num_workers > 0,
+        dataset,
+        batch_size         = args.batch_size,
+        shuffle            = False,
+        num_workers        = args.num_workers,
+        pin_memory         = torch.cuda.is_available(),
+        persistent_workers = args.num_workers > 0,
     )
 
     pred_rows = predict(model, loader, device)
@@ -107,14 +120,29 @@ if __name__ == "__main__":
     # paths
     parser.add_argument("--weights", type=str, required=True)
     parser.add_argument("--data-path", type=str, default="./Data/")
-    parser.add_argument("--output", type=str, default="binary_predictions.csv",
-                        help="预测结果 CSV 输出路径；置空字符串可只打印 accuracy 不落盘")
+    parser.add_argument(
+        "--output",
+        type    = str,
+        default = "binary_predictions.csv",
+        help    = "预测结果 CSV 输出路径；置空字符串可只打印 accuracy 不落盘",
+    )
 
     # model（须与训练时一致）
-    parser.add_argument("--model-type", type=str, default="ConvNeXtNet", choices=["ConvNeXtNet", "SPPConvNeXt"])
-    parser.add_argument("--model-name", type=str, default="convnext_tiny",
-                        choices=["convnext_tiny", "convnext_small", "convnext_base", "convnext_large"])
-    parser.add_argument("--dropout", type=float, default=0.5, help="仅 SPPConvNeXt 用到")
+    parser.add_argument(
+        "--model-type",
+        type    = str,
+        default = "ConvNeXtNet",
+        choices = ["ConvNeXtNet", "SPPConvNeXt"],
+    )
+    parser.add_argument(
+        "--model-name",
+        type    = str,
+        default = "convnext_tiny",
+        choices = ["convnext_tiny", "convnext_small", "convnext_base", "convnext_large"],
+    )
+    parser.add_argument(
+        "--dropout", type=float, default=0.5, help="仅 SPPConvNeXt 用到"
+    )
 
     # hardware
     parser.add_argument("--device", type=str, default="")
@@ -122,3 +150,5 @@ if __name__ == "__main__":
     parser.add_argument("--num-workers", type=int, default=8)
 
     main(parser.parse_args())
+
+# fmt: on

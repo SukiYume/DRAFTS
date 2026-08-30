@@ -69,10 +69,11 @@ shards_*/
 /search_pipeline/DataCheck_Plots/
 /search_pipeline/processing_log*.txt
 /search_pipeline/pbsspt/
+/search_pipeline/search_xzdata/run_frb190417.sh
+/search_pipeline/search_xzdata/units_frb190417.tsv
 
 # Local-only or retired code/results
 /search_pipeline/legacy/
-/search_pipeline/frb190417*
 /search_pipeline/d-dm-time-predown-*.py
 /search_pipeline/d-center-binary-gate-*.py
 !/search_pipeline/d-center-binary-gate-new.py

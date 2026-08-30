@@ -1,374 +1,191 @@
 # Radio Telescope Anomaly Detection
 
-基于自编码器的射电望远镜时频谱图异常检测系统。使用 ConvNeXt 编码器和 U-Net 风格解码器，通过重建误差识别异常信号。
+这个目录实现基于 AE/VAE 重建误差的射电时频图异常检测，也支持用前一个切片预测下一个切片的时间一致性模式。模型使用 ConvNeXt-Tiny 或 ResNet18 编码器，以及带门控跳连的对称解码器。
 
-## 本地保留范围
+## 保留内容
 
-本目录是从历史实验目录精简后的可复现快照，只保留源码、说明和最佳权重：
+- `prepare_data.py`：递归读取 PSRFITS，生成 HDF5 切片。
+- `dataset_h5.py`：单切片数据集、严格连续的相邻切片数据集和数据增强。
+- `models.py`：AE/VAE、训练损失和统一异常分数。
+- `train_ddp.py`：单进程或 `torchrun` DDP 训练。
+- `run_inference.py`：HDF5/FITS 推理、阈值判断和可视化。
+- `extract_latents.py`：VAE 潜变量导出及 UMAP/t-SNE 图。
+- `train.sh`：集中配置的 Linux 训练入口。
+- `best_loss_model.pth`：本地保留的 ConvNeXt、128 潜通道 VAE 权重。
 
-- `best_loss_model.pth`：ConvNeXt 编码器、128 通道潜变量的 VAE 最低验证损失权重；
-- `prepare_data.py`：从外部 FITS 重新生成 H5 输入；
-- `run_inference.py`：从 H5 或 FITS 目录运行异常检测；
-- 训练、数据集和潜变量分析代码。
+历史运行目录、临时 HDF5 和缓存不属于源码。默认输出目录均已忽略；大规模输入和结果应放在仓库外。
 
-历史 `inference_data/`、`inference_results/`、缓存和临时 H5 没有随项目迁移。新的输入和输出应放在仓库外的数据/运行目录，或使用下方参数显式指定。
+## 环境
 
-保留权重的典型推理命令：
-
-```bash
-python run_inference.py \
-    --fits_dir /path/to/fits_directory \
-    --model_path ./best_loss_model.pth \
-    --model vae \
-    --encoder convnext \
-    --output_dir /path/to/anomaly_results \
-    --plot_anomalies
-```
-
-## 📁 项目结构
-
-```
-RadioAnomalyDetection/
-├── models.py           # 模型定义 (AE/VAE) + Loss 函数
-├── dataset_h5.py       # HDF5 数据集 + 数据增强
-├── prepare_data.py     # FITS → HDF5 数据转换
-├── train_ddp.py        # DDP 多卡训练脚本
-├── run_inference.py    # 推理 + 异常检测
-├── train.sh            # 训练启动脚本
-└── requirements.txt    # 依赖包
-```
-
-## 🚀 快速开始
-
-### 1. 安装依赖
+需要 Python 3.10 或更新版本，以及 PyTorch 2.3 或更新版本。
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. 准备数据
+`fitsio` 用于快速读取；无法使用时，预处理会回退到 Astropy。ConvNeXt/ResNet 的 ImageNet 初始化可能需要首次下载权重，离线环境请传 `--no_pretrained`。
 
-将 FITS 文件转换为 HDF5 格式：
+## 数据准备
+
+命令行可以接收一个或多个 FITS 文件、目录或通配符。目录会递归扫描 `.fit`/`.fits` 文件，不再依赖文件名包含特定波束编号。
 
 ```bash
-python prepare_data.py
+python prepare_data.py /data/observation_a /data/observation_b \
+    --output /data/anomaly/train.h5 \
+    --down_times 8 16 32 64 128 256 \
+    --num_workers 8
 ```
 
-或在 Python 中：
+也可在 Python 中调用：
 
 ```python
 from prepare_data import build_h5_from_fits_paths
 
-h5_path, _, _ = build_h5_from_fits_paths(
-    fits_paths=["/path/to/fits/directory"],
-    out_h5_path="data.h5",
+h5_path, factors, workers = build_h5_from_fits_paths(
+    ["/data/observation_a", "/data/observation_b"],
+    out_h5_path="/data/anomaly/train.h5",
     down_time_list=(8, 16, 32, 64, 128, 256),
     num_workers=8,
 )
 ```
 
-### 3. 训练模型
+每个 PSRFITS 的处理顺序是：
 
-**单卡训练：**
+1. 将 `DATA` 重排为 `(time, polarization, frequency)`，平均前两个偏振；
+2. 将相邻频率通道平均到 512 个通道；
+3. 分别按请求倍率做时间平均；
+4. 切成 `(512 time, 512 frequency)` 的非重叠块；
+5. 每个块独立用有限值的 1%–99% 分位裁剪，并线性缩放到 `[0, 1]`。
+
+某个倍率所需的时间样本不足时只跳过该倍率，不影响同一文件的较小倍率。常数切片会得到全零；非有限值会先用该切片的有限中位数替换。输出采用临时文件写入并在成功后原子替换目标，失败不会留下一个伪装成完整结果的 HDF5。
+
+HDF5 契约：
+
+| 数据集 | 形状 | 含义 |
+|---|---:|---|
+| `images` | `(N, 512, 512)` | `float32`，轴顺序为 `(time, frequency)` |
+| `names` | `(N, 1)` | 原始 FITS 完整路径 |
+| `down_time` | `(N, 1)` | 时间下采样倍率 |
+| `slice_idx` | `(N, 1)` | 该 FITS、该倍率内的切片序号 |
+
+## 训练
+
+单卡 AE：
+
 ```bash
 python train_ddp.py \
-    --h5_path ./data.h5 \
+    --h5_path /data/anomaly/train.h5 \
     --model ae \
+    --encoder convnext \
     --epochs 50 \
     --batch_size 32 \
     --augment
 ```
 
-**多卡 DDP 训练：**
-```bash
-torchrun --nproc_per_node=8 train_ddp.py \
-    --h5_path ./data.h5 \
-    --model ae \
-    --epochs 50 \
-    --batch_size 32 \
-    --augment
-```
+八卡 VAE：
 
-**VAE 训练：**
 ```bash
-torchrun --nproc_per_node=8 train_ddp.py \
-    --h5_path ./data.h5 \
+torchrun --standalone --nproc_per_node=8 train_ddp.py \
+    --h5_path /data/anomaly/train.h5 \
     --model vae \
-    --epochs 50 \
+    --encoder convnext \
+    --latent_dim 128 \
     --kl_weight 0.1 \
     --kl_warmup_epochs 10 \
+    --epochs 50 \
+    --batch_size 32 \
     --augment
 ```
 
-### 4. 推理
+相邻切片预测模式在上述任一模型上增加 `--pred`。一对样本必须满足：完整 `name` 相同、`down_time` 相同且 `slice_idx` 严格相差 1；代码不会跨 FITS 文件或跨缺口配对。
+
+训练/验证划分也按完整 FITS 路径分组，至少有两个源文件时，同一文件的切片或相邻对不会同时落入两侧；只有一个源文件时才退回样本级划分。
+
+```bash
+python train_ddp.py \
+    --h5_path /data/anomaly/train.h5 \
+    --model vae \
+    --pred \
+    --down_times 32
+```
+
+`train.sh` 提供同一组参数的集中配置。它从 `CUDA_VISIBLE_DEVICES` 自动计算进程数，单卡和多卡走同一份参数数组，失败时不会误报“训练完成”。
+
+每次训练写入 `OUTPUT_ROOT/YYYYMMDD_HHMMSS/`：
+
+```text
+Epoch001_Tloss..._Vloss....pth  # 每轮纯模型权重
+best_loss_model.pth             # 最低验证损失的纯模型权重
+last_checkpoint.pth             # 模型、优化器、调度器、scaler 和配置
+logs.npy                        # 本次进程的 [train_loss, val_loss]
+```
+
+`--resume` 接收 `last_checkpoint.pth`。最佳权重和每轮权重可以直接用于推理；完整 checkpoint 也可直接用于推理，程序会读取其中的模型权重并核对配置。
+
+## 异常分数
+
+对每个样本先计算逐像素 SmoothL1 误差 `e`：
+
+```text
+reconstruction_score = max(mean(e), percentile_99(e))
+AE_score  = reconstruction_score
+VAE_score = reconstruction_score + beta * mean(KL(mu, logvar))
+```
+
+VAE 只在训练状态从后验采样；`eval()` 时固定解码 `mu`，因此同一权重和输入会得到可复现分数。预测模式将前一切片作为输入、当前切片作为目标，输出索引和元数据都对应当前目标切片。
+
+## 推理
+
+使用本地保留权重从 FITS 运行：
 
 ```bash
 python run_inference.py \
-    --h5_path ./data.h5 \
-    --model_path ./outputs/best.pth \
-    --model ae \
+    --fits_dir /data/observation \
+    --model_path ./best_loss_model.pth \
+    --model vae \
+    --encoder convnext \
+    --latent_dim 128 \
+    --output_dir /data/anomaly/inference \
     --plot_anomalies
 ```
 
----
+从已有 HDF5 运行：
 
-## 🔄 数据流 (Data Flow)
-
-本节详细描述数据如何从原始 FITS 时频数组，经过预处理、模型推理，最终判断是否为异常。
-
-### 整体流程图
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              DATA FLOW                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐                │
-│  │  FITS File   │────▶│  Time-Freq   │────▶│   512×512    │                │
-│  │ (Raw Data)   │     │   Array      │     │   Patches    │                │
-│  └──────────────┘     └──────────────┘     └──────────────┘                │
-│         │                    │                    │                          │
-│         │              下采样 + 归一化            │                          │
-│         ▼                    ▼                    ▼                          │
-│  ┌──────────────────────────────────────────────────────────┐              │
-│  │                      HDF5 File                            │              │
-│  │  images: (N, 512, 512) float32 [0,1]                     │              │
-│  │  names:  原始文件名                                       │              │
-│  │  down_time: 时间下采样率                                  │              │
-│  │  slice_idx: patch 序号                                    │              │
-│  └──────────────────────────────────────────────────────────┘              │
-│                              │                                              │
-│                              ▼                                              │
-│  ┌──────────────────────────────────────────────────────────┐              │
-│  │                   TRAINING PHASE                          │              │
-│  │                                                           │              │
-│  │   Input ─▶ Encoder ─▶ Latent ─▶ Decoder ─▶ Recon        │              │
-│  │   (1,512,512)  (768,16,16)        (1,512,512)            │              │
-│  │                                                           │              │
-│  │   Loss = SmoothL1(Recon, Input) [+ β×KL for VAE]         │              │
-│  └──────────────────────────────────────────────────────────┘              │
-│                              │                                              │
-│                              ▼                                              │
-│  ┌──────────────────────────────────────────────────────────┐              │
-│  │                   INFERENCE PHASE                         │              │
-│  │                                                           │              │
-│  │   Input ─▶ Model ─▶ Recon                                │              │
-│  │              │                                            │              │
-│  │              ▼                                            │              │
-│  │   Error Map = |Input - Recon|                            │              │
-│  │              │                                            │              │
-│  │              ▼                                            │              │
-│  │   Score = max(mean(Error), p99(Error))                   │              │
-│  │              │                                            │              │
-│  │              ▼                                            │              │
-│  │   Anomaly = (Score > Threshold)                          │              │
-│  └──────────────────────────────────────────────────────────┘              │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+```bash
+python run_inference.py \
+    --h5_path /data/anomaly/test.h5 \
+    --model_path /models/best_loss_model.pth \
+    --model vae \
+    --kl_weight 0.1 \
+    --batch_size 32
 ```
 
-### 阶段 1: FITS → HDF5 预处理
+对已有 HDF5，省略 `--down_times` 表示使用全部倍率；提供该参数时只推理指定倍率。直接从 FITS 推理且省略该参数时，默认生成 `8 16 32 64 128 256`。
 
-**输入**: 原始 FITS 文件，包含时间-频率数据 `(T, F)`
+阈值可选 `3sigma`、`iqr` 或 `percentile`。这些方法从当前被评估数据估计阈值，适合探索，但会受其中异常样本污染。生产或跨观测比较应从独立正常校准集得到阈值，并用 `--threshold VALUE` 固定。
 
-**处理步骤**:
+每次推理输出：
 
-1. **读取 FITS**: 提取 DATA 字段，合并极化通道
-   ```
-   (NAXIS2 × NSBLK, NPOL, NCHAN) → mean(axis=1) → (T, F)
-   ```
-
-2. **频率下采样**: 将频率维压缩到 512
-   ```
-   (T, F) → reshape(T, 512, F/512) → mean(axis=2) → (T, 512)
-   ```
-
-3. **时间下采样**: 按多个倍率（如 8, 16, 32, 64...）下采样
-   ```
-   (T, 512) → reshape + mean → (T/down_time, 512)
-   ```
-
-4. **切片提取**: 每 512 行切成一个 patch
-   ```
-   (T', 512) → reshape → (N_slices, 512, 512)
-   ```
-
-5. **归一化**: 频率通道归一化 + 5%-95% clip + min-max 到 [0,1]
-   ```python
-   data /= mean(data, axis=0)      # 按频率通道归一化
-   data = clip(data, p5, p95)      # 去除极端值
-   data = (data - min) / (max - min)  # 归一化到 [0,1]
-   ```
-
-**输出**: HDF5 文件
-```
-images:    (N, 512, 512) float32, 归一化到 [0,1]
-names:     (N, 1) 原始 FITS 文件路径
-down_time: (N, 1) 时间下采样倍率
-slice_idx: (N, 1) 该倍率下的 slice 序号
+```text
+results.npz             # 总分、重建分、KL 分、判定和完整 HDF5 元数据
+score_distribution.png # 分布与排序图
+anomalies.txt           # 可追溯到 FITS、倍率、slice_idx 的异常表
+anomaly_images/         # 可选的输入/目标/重建/差值图
 ```
 
-### 阶段 2: 模型训练
+预测模式增加 `--pred`，且必须使用以同一模式训练的权重。
 
-**目标**: 让模型学会重建"正常"的时频谱图
+## 潜变量
 
-**模型架构**:
-
-```
-Input (1, 512, 512)
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│  ConvNeXt-Tiny Encoder (ImageNet pretrained) │
-│  ├── Stem (stride 4)   → (96, 128, 128)     │
-│  ├── Stage 0           → (96, 128, 128)     │
-│  ├── Stage 1 (down)    → (192, 64, 64)      │
-│  ├── Stage 2 (down)    → (384, 32, 32)      │
-│  └── Stage 3 (down)    → (768, 16, 16)  ◀── Bottleneck
-└─────────────────────────────────────────────┘
-    │
-    │ [VAE: → μ, logσ² → reparameterize → z]
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│  Symmetric Decoder (Gated Skip Connections)  │
-│  ├── Up 1 (×2)         → (384, 32, 32)      │
-│  ├── Up 2 (×2)         → (192, 64, 64)      │
-│  ├── Up 3 (×2)         → (96, 128, 128)     │
-│  └── Final (×4)        → (1, 512, 512)      │
-└─────────────────────────────────────────────┘
-    │
-    ▼
-Output (1, 512, 512) with Sigmoid → [0, 1]
+```bash
+python extract_latents.py \
+    --h5_path /data/anomaly/test.h5 \
+    --model_path ./best_loss_model.pth \
+    --encoder convnext \
+    --latent_dim 128 \
+    --kl_weight 0.1 \
+    --method umap \
+    --output_dir /data/anomaly/latents
 ```
 
-**损失函数**:
-- **AE**: `Loss = SmoothL1(Recon, Input)`
-- **VAE**: `Loss = SmoothL1(Recon, Input) + β × KL(q(z|x) || p(z))`
-
-使用 **Huber/SmoothL1** 而非 MSE，对 RFI 等异常值更鲁棒。
-
-**关键技术**:
-- Gated Skip Connections: 初始化接近 0，强制信息通过 bottleneck
-- KL Annealing: β 从 0 线性升到目标值，防止 KL 坍塌
-- Differential LR: Encoder 使用更小的学习率（0.3×）
-
-### 阶段 3: 异常检测推理
-
-**核心思想**: 模型只学过"正常"数据 → 无法准确重建"异常"数据 → 重建误差大
-
-**推理流程**:
-
-```python
-# 1. 前向传播
-recon = model(input)  # 或 recon, mu, logvar = vae(input)
-
-# 2. 计算误差图
-error_map = SmoothL1(recon, input, reduction='none')  # (B, 1, H, W)
-
-# 3. 计算异常分数（兼顾全局和局部）
-error_flat = error_map.flatten(1)                     # (B, H×W)
-score_mean = error_flat.mean(dim=1)                   # 全局平均误差
-score_p99  = quantile(error_flat, 0.99, dim=1)        # 局部最大误差
-score = max(score_mean, score_p99)                    # 取较大者
-
-# 4. 阈值判断
-threshold = mean(scores) + 3 × std(scores)            # 3σ 法则
-is_anomaly = score > threshold
-```
-
-**为什么用 max(mean, p99)?**
-
-| 异常类型 | mean 特点 | p99 特点 | 最终 |
-|---------|----------|---------|------|
-| 全局异常（整张图都异常） | 高 | 高 | 检出 ✅ |
-| 稀疏异常（局部小区域） | 低 | 高 | 检出 ✅ |
-| 正常样本 | 低 | 低 | 正常 ✅ |
-
-### 阈值选择方法
-
-| 方法 | 公式 | 适用场景 |
-|------|------|---------|
-| **3σ** | `μ + 3σ` | 正态分布假设 |
-| **IQR** | `Q3 + 1.5×IQR` | 对异常值鲁棒 |
-| **百分位** | `95th percentile` | 固定比例 |
-
----
-
-## 🏗️ 模型架构
-
-### RadioAutoencoder (AE)
-
-```
-Params: ~28M
-Input:  (B, 1, 512, 512)
-Output: (B, 1, 512, 512)
-```
-
-### VariationalRadioAutoencoder (VAE)
-
-```
-Params: ~28M + latent layers
-Input:  (B, 1, 512, 512)
-Output: (B, 1, 512, 512), μ, logσ²
-Latent: (B, latent_ch, 16, 16)  # 默认 latent_ch=128
-```
-
-VAE 额外优势：
-- 可检测"潜在空间异常"（KL 项）
-- 可生成新样本（采样 z）
-
----
-
-## ⚙️ 训练参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `--h5_path` | (必填) | HDF5 数据路径 |
-| `--model` | `ae` | `ae` 或 `vae` |
-| `--epochs` | 50 | 训练轮数 |
-| `--batch_size` | 32 | 每卡 batch size |
-| `--lr` | 1e-4 | 学习率 |
-| `--encoder_lr_mult` | 0.3 | Encoder 学习率倍率 |
-| `--kl_weight` | 0.1 | VAE KL 权重 |
-| `--kl_warmup_epochs` | 10 | KL 预热 epoch 数 |
-| `--augment` | False | 启用数据增强 |
-| `--no_pretrained` | False | 不使用 ImageNet 预训练 |
-
----
-
-## 📊 输出文件
-
-训练输出 (`./outputs/YYYYMMDD_HHMMSS/`):
-```
-├── epoch001.pth      # 每 epoch 权重
-├── epoch002.pth
-├── ...
-├── best.pth          # 最佳模型（验证集 loss 最低）
-├── checkpoint.pth    # 断点续训用
-└── logs.npy          # 训练日志 [train_loss, val_loss]
-```
-
-推理输出 (`./inference_results/YYYYMMDD_HHMMSS/`):
-```
-├── results.npz              # 异常分数 + 阈值
-├── score_distribution.png   # 分数分布图
-├── anomalies.txt            # 异常样本列表
-└── anomaly_images/          # Top-N 异常可视化
-    ├── anomaly_01_idx123.png
-    └── ...
-```
-
----
-
-## 📖 参考
-
-- [ConvNeXt](https://arxiv.org/abs/2201.03545) - Encoder backbone
-- [β-VAE](https://arxiv.org/abs/1804.03599) - Disentangled VAE
-- [Huber Loss](https://en.wikipedia.org/wiki/Huber_loss) - 鲁棒损失函数
-
----
-
-## 📝 License
-
-MIT License
+潜变量工具在一次前向传播中同时取得 `mu`、重建和统一异常分数，避免重复编码同一批数据。UMAP/t-SNE 至少需要三个样本。

@@ -1,3 +1,4 @@
+# fmt: off
 """CenterNet 输出解码 + 基于中心距离的 P / R / F1 / 中心偏差评估。
 
 CenterNet 预测的是「中心点」，没有宽高，所以匹配本来就用欧氏距离（不是 IoU）：
@@ -18,8 +19,8 @@ from tqdm import tqdm
 
 
 # score 权重：检测阶段偏召回；中心 p90 偏差约束后续原始数据提取是否还能对准。
-RECALL_WEIGHT = 0.50
-PRECISION_WEIGHT = 0.20
+RECALL_WEIGHT         = 0.50
+PRECISION_WEIGHT      = 0.20
 CENTER_QUALITY_WEIGHT = 0.30
 
 
@@ -27,9 +28,10 @@ CENTER_QUALITY_WEIGHT = 0.30
 # 1. 解码：heatmap → 候选中心 (scores, centers)
 # ---------------------------------------------------------------------------
 
+
 def _nms_heatmap(hm, kernel=3):
     """3×3 max-pool 做峰值检测：只保留等于局部最大值的位置（heatmap 版 NMS）。"""
-    pad = kernel // 2
+    pad  = kernel // 2
     hmax = F.max_pool2d(hm, kernel, stride=1, padding=pad)
     return hm * (hmax == hm).float()
 
@@ -59,7 +61,9 @@ def decode_centernet_outputs(outputs, conf_thr=0.1, topk=100, down_ratio=4):
     hm = _nms_heatmap(torch.sigmoid(outputs["hm"]))
     scores, inds, xs, ys = _topk(hm, k=topk)
     offsets = _gather_offset(outputs["offset"], inds)
-    xs = (xs + offsets[..., 0]) * down_ratio   # 整数格点 + 亚像素 offset，乘以 stride 回原图
+    xs      = (
+        xs + offsets[..., 0]
+    ) * down_ratio  # 整数格点 + 亚像素 offset，乘以 stride 回原图
     ys = (ys + offsets[..., 1]) * down_ratio
 
     results = []
@@ -77,6 +81,7 @@ def decode_centernet_outputs(outputs, conf_thr=0.1, topk=100, down_ratio=4):
 # 2. 单图贪心匹配：[n_pred, n_gt] 距离矩阵 → 每个预测的 TP 标记 + 匹配距离
 # ---------------------------------------------------------------------------
 
+
 def _greedy_match(dist_matrix, dist_thr):
     """按预测顺序匹配最近的未占用 GT；距离需 ≤ ``dist_thr``。
 
@@ -89,7 +94,7 @@ def _greedy_match(dist_matrix, dist_thr):
         dist: ``[n_pred]`` 匹配距离；FP 处为 NaN
     """
     n_pred, n_gt = dist_matrix.shape
-    tp = np.zeros(n_pred, dtype=np.float32)
+    tp           = np.zeros(n_pred, dtype=np.float32)
     matched_dist = np.full(n_pred, np.nan, dtype=np.float32)
     if n_pred == 0 or n_gt == 0:
         return tp, matched_dist
@@ -99,7 +104,7 @@ def _greedy_match(dist_matrix, dist_thr):
         available_gt = np.flatnonzero(available)
         if available_gt.size == 0:
             break
-        gi = int(available_gt[np.argmin(dist_matrix[pi, available_gt])])
+        gi   = int(available_gt[np.argmin(dist_matrix[pi, available_gt])])
         best = float(dist_matrix[pi, gi])
         if best <= dist_thr:
             tp[pi] = 1.0
@@ -112,6 +117,7 @@ def _greedy_match(dist_matrix, dist_thr):
 # 3. PR 曲线 + 距离统计 + 主聚合
 # ---------------------------------------------------------------------------
 
+
 def _pr_curve(all_tp, all_conf, total_gt, all_dist=None):
     """按 conf 降序展开整集 PR 曲线。空输入返回长度 0 的数组，调用方自行处理。
 
@@ -122,19 +128,19 @@ def _pr_curve(all_tp, all_conf, total_gt, all_dist=None):
         empty = np.empty(0, dtype=np.float32)
         return empty, empty, empty, empty, None
 
-    tp = np.concatenate(all_tp)
-    conf = np.concatenate(all_conf)
-    dist = np.concatenate(all_dist) if all_dist is not None else None
+    tp    = np.concatenate(all_tp)
+    conf  = np.concatenate(all_conf)
+    dist  = np.concatenate(all_dist) if all_dist is not None else None
     order = np.argsort(-conf)
     tp, conf = tp[order], conf[order]
     if dist is not None:
         dist = dist[order]
 
-    cum_tp = np.cumsum(tp)
-    cum_fp = np.cumsum(1 - tp)
-    recall = cum_tp / total_gt
+    cum_tp    = np.cumsum(tp)
+    cum_fp    = np.cumsum(1 - tp)
+    recall    = cum_tp / total_gt
     precision = cum_tp / (cum_tp + cum_fp + 1e-8)
-    f1 = 2 * precision * recall / (precision + recall + 1e-8)
+    f1        = 2 * precision * recall / (precision + recall + 1e-8)
     return precision, recall, f1, conf, dist
 
 
@@ -163,8 +169,10 @@ def _distance_stats(dist_values, dist_thr):
 def _compute_pr_metrics(all_tp, all_conf, all_dist, total_gt, dist_thr):
     """在召回优先的工作点上算 P/R/F1，再叠加中心偏差统计与最终 score。"""
     empty = {
-        "f1": 0.0, "f1_conf": 0.0,
-        "precision": 0.0, "recall": 0.0,
+        "f1": 0.0,
+        "f1_conf": 0.0,
+        "precision": 0.0,
+        "recall": 0.0,
         "mean_center_dist": float(dist_thr),
         "p50_center_dist": float(dist_thr),
         "p90_center_dist": float(dist_thr),
@@ -178,14 +186,14 @@ def _compute_pr_metrics(all_tp, all_conf, all_dist, total_gt, dist_thr):
 
     # 检测阶段漏检不可恢复，误报还能交给分类器过滤，所以工作点选择偏召回
     detection_score = RECALL_WEIGHT * recall + PRECISION_WEIGHT * precision
-    best = int(np.argmax(detection_score))
+    best            = int(np.argmax(detection_score))
 
     # 中心偏差只在 score 选中的同一置信度工作点上统计，避免阈值口径不一致
-    selected_dist = dist[:best + 1]
-    dist_stats = _distance_stats(selected_dist[~np.isnan(selected_dist)], dist_thr)
+    selected_dist = dist[: best + 1]
+    dist_stats    = _distance_stats(selected_dist[~np.isnan(selected_dist)], dist_thr)
 
     precision_v = float(precision[best])
-    recall_v = float(recall[best])
+    recall_v    = float(recall[best])
     return {
         "f1": float(f1[best]),
         "f1_conf": float(conf[best]),
@@ -204,8 +212,11 @@ def _compute_pr_metrics(all_tp, all_conf, all_dist, total_gt, dist_thr):
 # 4. 主入口
 # ---------------------------------------------------------------------------
 
+
 @torch.no_grad()
-def evaluate_metrics(model, loader, device, conf_thr=0.01, topk=100, down_ratio=4, dist_thr=8.0):
+def evaluate_metrics(
+    model, loader, device, conf_thr=0.01, topk=100, down_ratio=4, dist_thr=8.0
+):
     """在验证集上算 P / R / F1 / 中心偏差分位数 / score。
 
     Args:
@@ -225,9 +236,11 @@ def evaluate_metrics(model, loader, device, conf_thr=0.01, topk=100, down_ratio=
     all_tp, all_conf, all_dist, total_gt = [], [], [], 0
 
     for batch in tqdm(loader, dynamic_ncols=True, ascii=True, desc="center eval"):
-        imgs = batch["img"].to(device, non_blocking=True)
+        imgs    = batch["img"].to(device, non_blocking=True)
         outputs = model(imgs)
-        decoded = decode_centernet_outputs(outputs, conf_thr=conf_thr, topk=topk, down_ratio=down_ratio)
+        decoded = decode_centernet_outputs(
+            outputs, conf_thr=conf_thr, topk=topk, down_ratio=down_ratio
+        )
 
         for (scores, centers), gt_centers_t in zip(decoded, batch["gt_centers"]):
             gt_centers = gt_centers_t.cpu().numpy()
@@ -237,17 +250,20 @@ def evaluate_metrics(model, loader, device, conf_thr=0.01, topk=100, down_ratio=
 
             # 先把 [n_pred, n_gt] 距离矩阵算出来；再交给 _greedy_match 做匹配
             if len(gt_centers) > 0:
-                diff = centers[:, None, :] - gt_centers[None, :, :]
-                dist_mat = np.sqrt((diff ** 2).sum(axis=2))
+                diff     = centers[:, None, :] - gt_centers[None, :, :]
+                dist_mat = np.sqrt((diff**2).sum(axis=2))
                 tp, dist = _greedy_match(dist_mat, dist_thr)
             else:
-                tp = np.zeros(len(centers), dtype=np.float32)
+                tp   = np.zeros(len(centers), dtype=np.float32)
                 dist = np.full(len(centers), np.nan, dtype=np.float32)
 
             all_tp.append(tp)
             all_conf.append(scores)
             all_dist.append(dist)
 
-    metrics = _compute_pr_metrics(all_tp, all_conf, all_dist, total_gt, dist_thr=dist_thr)
+    metrics = _compute_pr_metrics(
+        all_tp, all_conf, all_dist, total_gt, dist_thr=dist_thr
+    )
     metrics["dist_thr"] = float(dist_thr)
     return metrics
+# fmt: on

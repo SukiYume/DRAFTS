@@ -1,3 +1,5 @@
+# fmt: off
+
 """Inspect generated time-DM CenterNet H5 files with a contact sheet."""
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ def read_jsonl(path: Path | None) -> list[dict]:
 def normalize_for_display(img: np.ndarray) -> np.ndarray:
     """1%/99.5% 分位截断后拉伸到 [0,1]，仅用于可视化显示。"""
     vmin, vmax = np.percentile(img, (1, 99.5))
-    img = np.clip(img, vmin, vmax)
+    img        = np.clip(img, vmin, vmax)
     return (img - img.min()) / (img.max() - img.min() + 1e-8)
 
 
@@ -53,15 +55,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     """抽样若干张图，画出框 + 中心十字，拼成 contact sheet，并写一份 JSON 摘要做快速质检。"""
-    args = parse_args()
+    args          = parse_args()
     metadata_path = args.metadata or args.h5_path.with_suffix(".metadata.jsonl")
-    meta_rows = read_jsonl(metadata_path)
+    meta_rows     = read_jsonl(metadata_path)
 
     with h5py.File(args.h5_path, "r") as h5:
-        total = int(h5["images"].shape[0])
-        ann = h5["annotations"][:]
+        total   = int(h5["images"].shape[0])
+        ann     = h5["annotations"][:]
         indices = choose_indices(total, args.samples, args.seed)
-        images = [h5["images"][int(i)][()] for i in indices]
+        images  = [h5["images"][int(i)][()] for i in indices]
 
     summary = {
         "h5_path": str(args.h5_path),
@@ -74,7 +76,9 @@ def main() -> None:
     }
     if args.json is not None:
         args.json.parent.mkdir(parents=True, exist_ok=True)
-        args.json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        args.json.write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
 
     if args.contact_sheet is None or len(indices) == 0:
         print(json.dumps(summary, indent=2, sort_keys=True), flush=True)
@@ -82,21 +86,29 @@ def main() -> None:
 
     cols = min(6, len(indices))
     rows = int(np.ceil(len(indices) / cols))
-    fig, axes = plt.subplots(rows, cols, figsize=(3.2 * cols, 3.2 * rows), squeeze=False)
+    fig, axes = plt.subplots(
+        rows, cols, figsize=(3.2 * cols, 3.2 * rows), squeeze=False
+    )
     for ax in axes.ravel():
         ax.axis("off")
 
     for panel, (idx, img) in enumerate(zip(indices, images)):
         ax = axes.ravel()[panel]
-        ax.imshow(normalize_for_display(img), origin="lower", aspect="auto", cmap="viridis")
+        ax.imshow(
+            normalize_for_display(img), origin="lower", aspect="auto", cmap="viridis"
+        )
         boxes = ann[ann[:, 0].astype(np.int64) == int(idx), 1:5]
         for box_i, box in enumerate(boxes):
             x, y, w, h = [float(v) for v in box]
-            cx = x + w / 2.0
-            cy = y + h / 2.0
-            color = "white" if box_i == 0 else "cyan"
-            ax.add_patch(plt.Rectangle((x, y), w, h, fill=False, edgecolor=color, linewidth=1.0))
-            ax.plot([cx], [cy], marker="+", color=color, markersize=9, markeredgewidth=1.5)
+            cx         = x + w / 2.0
+            cy         = y + h / 2.0
+            color      = "white" if box_i == 0 else "cyan"
+            ax.add_patch(
+                plt.Rectangle((x, y), w, h, fill=False, edgecolor=color, linewidth=1.0)
+            )
+            ax.plot(
+                [cx], [cy], marker="+", color=color, markersize=9, markeredgewidth=1.5
+            )
         title = f"idx={int(idx)}"
         if int(idx) < len(meta_rows):
             row = meta_rows[int(idx)]
@@ -112,8 +124,17 @@ def main() -> None:
     fig.tight_layout()
     fig.savefig(args.contact_sheet, dpi=180)
     plt.close(fig)
-    print(json.dumps({**summary, "contact_sheet": str(args.contact_sheet)}, indent=2, sort_keys=True), flush=True)
+    print(
+        json.dumps(
+            {**summary, "contact_sheet": str(args.contact_sheet)},
+            indent    = 2,
+            sort_keys = True,
+        ),
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
     main()
+
+# fmt: on

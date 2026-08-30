@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# fmt: off
+
 """在注入数据上运行 PRESTO 盲搜 single-pulse 基线。
 
 This script follows the conventional PRESTO single-burst command pattern:
@@ -31,6 +33,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,10 +45,10 @@ BENCHMARK_DIR = Path(__file__).resolve().parent.parent
 if str(BENCHMARK_DIR) not in sys.path:
     sys.path.insert(0, str(BENCHMARK_DIR))
 
-from matching import maximum_cardinality_min_cost_matching
-from search_utils import (
+from matching import maximum_cardinality_min_cost_matching  # noqa: E402
+from search_utils import (                                  # noqa: E402
+    FLUENCE_SNR_BINS,
     QUANTIZATIONS,
-    SNR_BINS,
     bin_index,
     candidate_key,
     event_ddm,
@@ -55,21 +58,20 @@ from search_utils import (
     param_specs_for_truth,
     plot_parameter_cells,
     plot_snr_rows,
-    snr_rows_from_matches,
     truth_key,
     write_csv,
 )
 
-
-DEFAULT_RUN_LABEL = "v10_det03_injection_10000"
-DEFAULT_BASE_ROOT = Path(
-    os.environ.get("INJECTION_BENCHMARK_ROOT")
-    or "/path/to/drafts_runs/injection_benchmark"
-)
-DEFAULT_SIM_ROOT = DEFAULT_BASE_ROOT / "simdata"
+DEFAULT_RUN_LABEL  = "v10_det03_injection_10000"
+DEFAULT_BASE_ROOT  = Path(os.environ.get("INJECTION_BENCHMARK_ROOT") or BENCHMARK_DIR)
+DEFAULT_SIM_ROOT   = DEFAULT_BASE_ROOT / "simdata"
 DEFAULT_TRUTH_ROOT = DEFAULT_BASE_ROOT / "truth_archive"
-DEFAULT_OUTPUT_BASE = Path("/path/to/drafts_runs/injection_benchmark/presto_runtime")
-DEFAULT_SCRATCH_ROOT = Path(os.environ.get("PRESTO_SCRATCH_ROOT", str(DEFAULT_OUTPUT_BASE / "scratch")))
+DEFAULT_OUTPUT_BASE = Path(
+    os.environ.get("PRESTO_OUTPUT_ROOT") or (BENCHMARK_DIR / "presto_runtime")
+)
+DEFAULT_SCRATCH_ROOT = Path(
+    os.environ.get("PRESTO_SCRATCH_ROOT", str(DEFAULT_OUTPUT_BASE / "scratch"))
+)
 
 
 @dataclass(frozen=True)
@@ -108,7 +110,9 @@ def parse_batch(text: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def truth_paths(truth_root: Path, batches: list[int], quantizations: list[str]) -> list[Path]:
+def truth_paths(
+    truth_root: Path, batches: list[int], quantizations: list[str]
+) -> list[Path]:
     paths: list[Path] = []
     for batch in batches:
         for quant in quantizations:
@@ -117,15 +121,17 @@ def truth_paths(truth_root: Path, batches: list[int], quantizations: list[str]) 
     return paths
 
 
-def load_truth_archive(truth_root: Path, batches: list[int], quantizations: list[str]) -> list[dict]:
+def load_truth_archive(
+    truth_root: Path, batches: list[int], quantizations: list[str]
+) -> list[dict]:
     rows: list[dict] = []
     for path in truth_paths(truth_root, batches, quantizations):
         batch = parse_batch(str(path))
         quant = "packed2" if "packed2" in str(path) else "raw8"
         for row in read_jsonl(path):
-            row = dict(row)
-            row["batch"] = int(batch if batch is not None else row.get("batch", -1))
-            row["quantization"] = quant
+            row                   = dict(row)
+            row["batch"]          = int(batch if batch is not None else row.get("batch", -1))
+            row["quantization"]   = quant
             row["truth_manifest"] = str(path)
             rows.append(row)
     return rows
@@ -135,7 +141,7 @@ def build_jobs(args: argparse.Namespace, truth: list[dict]) -> list[Job]:
     groups: dict[tuple[str, int, str], list[dict]] = {}
     for row in truth:
         stem = str(row["output_file_stem"])
-        key = (str(row["quantization"]), int(row["batch"]), stem)
+        key  = (str(row["quantization"]), int(row["batch"]), stem)
         groups.setdefault(key, []).append(row)
 
     gpu_ids = args.gpu_ids
@@ -143,41 +149,67 @@ def build_jobs(args: argparse.Namespace, truth: list[dict]) -> list[Job]:
     job_items: list[tuple[str, int, int, Path, list[dict], tuple[Path, ...], int]] = []
     for batch in args.batches:
         for quant in args.quantizations:
-            sim_dir = args.sim_root / f"{args.run_label}_b{batch:02d}_{quant}"
+            sim_dir    = args.sim_root / f"{args.run_label}_b{batch:02d}_{quant}"
             fits_files = sorted(sim_dir.glob("*.fits"))
-            fits_by_stem = {path.stem: (index, path) for index, path in enumerate(fits_files)}
+            fits_by_stem = {
+                path.stem: (index, path) for index, path in enumerate(fits_files)
+            }
             if args.search_all_files:
                 stems = [path.stem for path in fits_files]
             else:
-                stems = sorted(stem for q, b, stem in groups if q == quant and b == batch)
+                stems = sorted(
+                    stem for q, b, stem in groups if q == quant and b == batch
+                )
             for stem in stems:
                 item = fits_by_stem.get(stem)
                 if item is None:
-                    print(f"[WARN] missing FITS: {sim_dir / f'{stem}.fits'}", flush=True)
+                    print(
+                        f"[WARN] missing FITS: {sim_dir / f'{stem}.fits'}", flush=True
+                    )
                     continue
                 file_index, fits_path = item
-                context_start = max(0, file_index - args.context_left_files)
-                context_end = min(len(fits_files), file_index + args.context_right_files + 1)
-                context_paths = tuple(fits_files[context_start:context_end])
+                context_start         = max(0, file_index - args.context_left_files)
+                context_end = min(
+                    len(fits_files), file_index + args.context_right_files + 1
+                )
+                context_paths        = tuple(fits_files[context_start:context_end])
                 center_context_index = file_index - context_start
-                key = (quant, batch, stem)
-                job_items.append((quant, batch, file_index, fits_path, groups.get(key, []), context_paths, center_context_index))
+                key                  = (quant, batch, stem)
+                job_items.append(
+                    (
+                        quant,
+                        batch,
+                        file_index,
+                        fits_path,
+                        groups.get(key, []),
+                        context_paths,
+                        center_context_index,
+                    )
+                )
 
-    for index, (quant, batch, _file_index, fits_path, rows, context_paths, center_context_index) in enumerate(job_items):
+    for index, (
+        quant,
+        batch,
+        _file_index,
+        fits_path,
+        rows,
+        context_paths,
+        center_context_index,
+    ) in enumerate(job_items):
         if not context_paths:
             continue
         jobs.append(
             Job(
-                quantization=quant,
-                batch=batch,
-                file_stem=fits_path.stem,
-                fits_path=str(fits_path),
-                context_fits_paths=tuple(str(path) for path in context_paths),
-                center_context_index=center_context_index,
-                center_start_sample=center_context_index * args.numout,
-                center_num_samples=args.numout,
-                truth_rows=tuple(rows),
-                gpu_id=gpu_ids[index % len(gpu_ids)],
+                quantization         = quant,
+                batch                = batch,
+                file_stem            = fits_path.stem,
+                fits_path            = str(fits_path),
+                context_fits_paths   = tuple(str(path) for path in context_paths),
+                center_context_index = center_context_index,
+                center_start_sample  = center_context_index * args.numout,
+                center_num_samples   = args.numout,
+                truth_rows           = tuple(rows),
+                gpu_id               = gpu_ids[index % len(gpu_ids)],
             )
         )
     if args.limit_jobs is not None:
@@ -185,13 +217,17 @@ def build_jobs(args: argparse.Namespace, truth: list[dict]) -> list[Job]:
     return jobs
 
 
-def dm_intervals(rows: Iterable[dict], args: argparse.Namespace) -> list[tuple[float, int]]:
+def dm_intervals(
+    rows: Iterable[dict], args: argparse.Namespace
+) -> list[tuple[float, int]]:
     if args.mode == "blind":
         intervals: list[tuple[float, int]] = []
         lodm = args.dm_min
         epsilon = args.dm_step * 1e-6
         while lodm <= args.dm_max + epsilon:
-            remaining = int(math.floor((args.dm_max - lodm) / args.dm_step + epsilon)) + 1
+            remaining = (
+                int(math.floor((args.dm_max - lodm) / args.dm_step + epsilon)) + 1
+            )
             numdms = max(1, min(args.dm_block_size, remaining))
             intervals.append((lodm, numdms))
             lodm += numdms * args.dm_step
@@ -200,8 +236,12 @@ def dm_intervals(rows: Iterable[dict], args: argparse.Namespace) -> list[tuple[f
     raw: list[tuple[float, float]] = []
     for row in rows:
         dm = float(row["dm_pc_cm3"])
-        lo = max(args.dm_min, math.floor((dm - args.dm_window) / args.dm_step) * args.dm_step)
-        hi = min(args.dm_max, math.ceil((dm + args.dm_window) / args.dm_step) * args.dm_step)
+        lo = max(
+            args.dm_min, math.floor((dm - args.dm_window) / args.dm_step) * args.dm_step
+        )
+        hi = min(
+            args.dm_max, math.ceil((dm + args.dm_window) / args.dm_step) * args.dm_step
+        )
         raw.append((lo, hi))
     raw.sort()
     merged: list[tuple[float, float]] = []
@@ -232,12 +272,12 @@ def run_command(
         log.flush()
         proc = subprocess.run(
             cmd,
-            cwd=str(cwd),
-            shell=shell,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            env=env,
-            text=True,
+            cwd    = str(cwd),
+            shell  = shell,
+            stdout = log,
+            stderr = subprocess.STDOUT,
+            env    = env,
+            text   = True,
         )
         log.write(f"[exit={proc.returncode} elapsed={time.time() - started:.3f}s]\n")
     return int(proc.returncode)
@@ -252,8 +292,10 @@ def remove_prepsubband_outputs(work_dir: Path) -> None:
                 pass
 
 
-def rewrite_cropped_inf(path: Path, sample_offset: int, num_samples: int, dt_seconds: float) -> None:
-    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+def rewrite_cropped_inf(
+    path: Path, sample_offset: int, num_samples: int, dt_seconds: float
+) -> None:
+    lines          = path.read_text(encoding="utf-8", errors="replace").splitlines()
     out: list[str] = []
     for line in lines:
         if line.startswith(" Number of bins in the time series"):
@@ -274,11 +316,13 @@ def rewrite_cropped_inf(path: Path, sample_offset: int, num_samples: int, dt_sec
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
-def crop_prepsubband_outputs(work_dir: Path, job: Job, dt_seconds: float, log_path: Path) -> None:
+def crop_prepsubband_outputs(
+    work_dir: Path, job: Job, dt_seconds: float, log_path: Path
+) -> None:
     sample_offset = int(job.center_start_sample)
-    sample_end = sample_offset + int(job.center_num_samples)
-    cropped = 0
-    skipped = 0
+    sample_end    = sample_offset + int(job.center_num_samples)
+    cropped       = 0
+    skipped       = 0
     for dat_path in sorted(work_dir.glob("*.dat")):
         data = np.fromfile(dat_path, dtype=np.float32)
         if data.size < sample_end:
@@ -287,7 +331,9 @@ def crop_prepsubband_outputs(work_dir: Path, job: Job, dt_seconds: float, log_pa
         data[sample_offset:sample_end].copy().tofile(dat_path)
         inf_path = dat_path.with_suffix(".inf")
         if inf_path.exists():
-            rewrite_cropped_inf(inf_path, sample_offset, int(job.center_num_samples), dt_seconds)
+            rewrite_cropped_inf(
+                inf_path, sample_offset, int(job.center_num_samples), dt_seconds
+            )
         cropped += 1
     with log_path.open("a", encoding="utf-8", errors="replace") as log:
         log.write(
@@ -296,16 +342,21 @@ def crop_prepsubband_outputs(work_dir: Path, job: Job, dt_seconds: float, log_pa
         )
 
 
-def write_valid_dat_list(work_dir: Path, args: argparse.Namespace, log_path: Path) -> Path:
-    valid_path = work_dir / "valid_dat_files.txt"
-    invalid_path = work_dir / "invalid_dat_files.txt"
-    valid_count = 0
+def write_valid_dat_list(
+    work_dir: Path, args: argparse.Namespace, log_path: Path
+) -> Path:
+    valid_path    = work_dir / "valid_dat_files.txt"
+    invalid_path  = work_dir / "invalid_dat_files.txt"
+    valid_count   = 0
     invalid_count = 0
-    with valid_path.open("w", encoding="utf-8") as valid, invalid_path.open("w", encoding="utf-8") as invalid:
+    with (
+        valid_path.open("w", encoding="utf-8") as valid,
+        invalid_path.open("w", encoding="utf-8") as invalid,
+    ):
         for path in sorted(work_dir.glob("*.dat")):
             try:
-                data = np.fromfile(path, dtype=np.float32)
-                std = float(np.nanstd(data)) if data.size else 0.0
+                data   = np.fromfile(path, dtype=np.float32)
+                std    = float(np.nanstd(data)) if data.size else 0.0
                 finite = bool(np.isfinite(data).all()) if data.size else False
             except Exception as exc:  # noqa: BLE001 - diagnostics only.
                 invalid.write(f"{path.name}\tread_error\t{exc}\n")
@@ -318,14 +369,18 @@ def write_valid_dat_list(work_dir: Path, args: argparse.Namespace, log_path: Pat
                 invalid.write(f"{path.name}\tstd={std:.8g}\tfinite={finite}\n")
                 invalid_count += 1
     with log_path.open("a", encoding="utf-8", errors="replace") as log:
-        log.write(f"[dat-filter] valid={valid_count} invalid={invalid_count} min_std={args.min_dat_std}\n")
+        log.write(
+            f"[dat-filter] valid={valid_count} invalid={invalid_count} min_std={args.min_dat_std}\n"
+        )
     return valid_path
 
 
-def parse_singlepulse_file(path: Path, job: Job, dt_seconds: float, sample_offset: int) -> list[dict]:
+def parse_singlepulse_file(
+    path: Path, job: Job, dt_seconds: float, sample_offset: int
+) -> list[dict]:
     rows: list[dict] = []
-    center_lo = int(sample_offset)
-    center_hi = center_lo + int(job.center_num_samples)
+    center_lo        = int(sample_offset)
+    center_hi        = center_lo + int(job.center_num_samples)
     with path.open("r", encoding="utf-8", errors="replace") as handle:
         for line in handle:
             stripped = line.strip()
@@ -335,10 +390,10 @@ def parse_singlepulse_file(path: Path, job: Job, dt_seconds: float, sample_offse
             if len(parts) < 5:
                 continue
             try:
-                dm = float(parts[0])
-                sigma = float(parts[1])
-                time_s = float(parts[2])
-                sample = int(float(parts[3]))
+                dm       = float(parts[0])
+                sigma    = float(parts[1])
+                time_s   = float(parts[2])
+                sample   = int(float(parts[3]))
                 downfact = int(float(parts[4]))
             except ValueError:
                 continue
@@ -370,9 +425,27 @@ def parse_singlepulse_file(path: Path, job: Job, dt_seconds: float, sample_offse
 
 def run_job(job: Job, args_dict: dict) -> dict:
     args = argparse.Namespace(**args_dict)
-    candidate_path = args.output_root / "candidates" / job.quantization / f"b{job.batch:02d}" / f"{job.file_stem}.jsonl"
-    event_path = args.output_root / "events" / job.quantization / f"b{job.batch:02d}" / f"{job.file_stem}.jsonl"
-    status_path = args.output_root / "status" / job.quantization / f"b{job.batch:02d}" / f"{job.file_stem}.json"
+    candidate_path = (
+        args.output_root
+        / "candidates"
+        / job.quantization
+        / f"b{job.batch:02d}"
+        / f"{job.file_stem}.jsonl"
+    )
+    event_path = (
+        args.output_root
+        / "events"
+        / job.quantization
+        / f"b{job.batch:02d}"
+        / f"{job.file_stem}.jsonl"
+    )
+    status_path = (
+        args.output_root
+        / "status"
+        / job.quantization
+        / f"b{job.batch:02d}"
+        / f"{job.file_stem}.json"
+    )
     if event_path.exists() and status_path.exists() and not args.overwrite:
         return {
             "status": "skipped",
@@ -384,15 +457,27 @@ def run_job(job: Job, args_dict: dict) -> dict:
         }
 
     file_token = job.file_stem.rsplit("_", 1)[-1]
-    quant_token = {"raw8": "r8", "packed2": "p2"}.get(job.quantization, job.quantization[:4])
+    quant_token = {"raw8": "r8", "packed2": "p2"}.get(
+        job.quantization, job.quantization[:4]
+    )
     short_job_name = f"{quant_token}b{job.batch:02d}_{file_token}"
-    work_dir = args.scratch_root / args.output_root.name / short_job_name
-    log_path = args.output_root / "logs" / job.quantization / f"b{job.batch:02d}" / f"{job.file_stem}.log"
+    work_dir       = args.scratch_root / args.output_root.name / short_job_name
+    log_path = (
+        args.output_root
+        / "logs"
+        / job.quantization
+        / f"b{job.batch:02d}"
+        / f"{job.file_stem}.log"
+    )
     if args.overwrite and work_dir.exists():
         shutil.rmtree(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    dt_seconds = float(job.truth_rows[0].get("time_reso_seconds", 4.9152e-05)) if job.truth_rows else 4.9152e-05
+    dt_seconds = (
+        float(job.truth_rows[0].get("time_reso_seconds", 4.9152e-05))
+        if job.truth_rows
+        else 4.9152e-05
+    )
     started = time.time()
     status = {
         "status": "running",
@@ -430,7 +515,14 @@ def run_job(job: Job, args_dict: dict) -> dict:
     try:
         if not args.skip_rfifind or not mask_path.exists():
             rc = run_command(
-                ["rfifind", *job.context_fits_paths, "-o", str(prefix), "-time", str(args.rfifind_time)],
+                [
+                    "rfifind",
+                    *job.context_fits_paths,
+                    "-o",
+                    str(prefix),
+                    "-time",
+                    str(args.rfifind_time),
+                ],
                 work_dir,
                 log_path,
                 env=env,
@@ -438,7 +530,7 @@ def run_job(job: Job, args_dict: dict) -> dict:
             if rc != 0 or not mask_path.exists():
                 raise RuntimeError(f"rfifind failed rc={rc}")
 
-        intervals = dm_intervals(job.truth_rows, args)
+        intervals              = dm_intervals(job.truth_rows, args)
         status["dm_intervals"] = [{"lodm": lo, "numdms": ndm} for lo, ndm in intervals]
         if not intervals:
             if args.keep_candidates:
@@ -455,7 +547,9 @@ def run_job(job: Job, args_dict: dict) -> dict:
                 }
             )
             status_path.parent.mkdir(parents=True, exist_ok=True)
-            status_path.write_text(json.dumps(status, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            status_path.write_text(
+                json.dumps(status, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
             return status
 
         for interval_index, (lodm, numdms) in enumerate(intervals):
@@ -495,7 +589,9 @@ def run_job(job: Job, args_dict: dict) -> dict:
                 retry_cmd[retry_cmd.index("-nsub") + 1] = str(args.retry_nsub)
                 rc = run_command(retry_cmd, work_dir, log_path, env=env)
             if rc != 0:
-                raise RuntimeError(f"prepsubband interval {interval_index} failed rc={rc}")
+                raise RuntimeError(
+                    f"prepsubband interval {interval_index} failed rc={rc}"
+                )
 
         sample_offset = 0
         if args.crop_dat_to_center:
@@ -504,7 +600,9 @@ def run_job(job: Job, args_dict: dict) -> dict:
             sample_offset = int(job.center_start_sample)
 
         valid_dat_path = write_valid_dat_list(work_dir, args, log_path)
-        single_pulse = shutil.which("single_pulse_search.py") or "single_pulse_search.py"
+        single_pulse = (
+            shutil.which("single_pulse_search.py") or "single_pulse_search.py"
+        )
         xargs_cmd = (
             f"cat {valid_dat_path.name} | "
             f"xargs -r -n {args.xargs_chunk} -P {args.xargs_procs} "
@@ -515,10 +613,10 @@ def run_job(job: Job, args_dict: dict) -> dict:
             fallback_cmd = (
                 f"cat {valid_dat_path.name} | "
                 f"xargs -r -n {args.xargs_chunk} -P {args.xargs_procs} sh -c "
-            f"'for dat in \"$@\"; do "
-            f"python {single_pulse} -b -m {args.maxwidth} -t {args.threshold} -p \"$dat\" "
-            f"|| echo \"[WARN] single_pulse_search failed for $dat\" >&2; "
-            f"done' sh"
+                f'\'for dat in "$@"; do '
+                f'python {single_pulse} -b -m {args.maxwidth} -t {args.threshold} -p "$dat" '
+                f'|| echo "[WARN] single_pulse_search failed for $dat" >&2; '
+                f"done' sh"
             )
             rc = run_command(fallback_cmd, work_dir, log_path, shell=True, env=env)
         if rc != 0:
@@ -536,7 +634,9 @@ def run_job(job: Job, args_dict: dict) -> dict:
             if args.keep_candidates:
                 candidates.extend(rows)
             for row in rows:
-                next_event_id = add_candidate_to_event_index(row, key, events, event_buckets, next_event_id, args)
+                next_event_id = add_candidate_to_event_index(
+                    row, key, events, event_buckets, next_event_id, args
+                )
         if args.keep_candidates:
             write_jsonl(candidate_path, candidates)
         write_jsonl(event_path, events)
@@ -550,14 +650,25 @@ def run_job(job: Job, args_dict: dict) -> dict:
             }
         )
         status_path.parent.mkdir(parents=True, exist_ok=True)
-        status_path.write_text(json.dumps(status, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        status_path.write_text(
+            json.dumps(status, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         if not args.keep_dat:
             remove_prepsubband_outputs(work_dir)
         return status
     except Exception as exc:  # noqa: BLE001 - worker must report failures.
-        status.update({"status": "failed", "error": str(exc), "finished_unix": time.time(), "elapsed_seconds": time.time() - started})
+        status.update(
+            {
+                "status": "failed",
+                "error": str(exc),
+                "finished_unix": time.time(),
+                "elapsed_seconds": time.time() - started,
+            }
+        )
         status_path.parent.mkdir(parents=True, exist_ok=True)
-        status_path.write_text(json.dumps(status, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        status_path.write_text(
+            json.dumps(status, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         return status
 
 
@@ -588,7 +699,7 @@ def load_statuses(output_root: Path) -> list[dict]:
 
 
 def event_from_candidate(row: dict, event_id: str) -> dict:
-    dm = float(row["dm_pc_cm3"])
+    dm      = float(row["dm_pc_cm3"])
     time_ms = float(row["time_ms"])
     return {
         "event_id": event_id,
@@ -616,12 +727,12 @@ def event_from_candidate(row: dict, event_id: str) -> dict:
 
 def update_event_if_stronger(event: dict, row: dict) -> None:
     event["event_size"] += 1
-    dm = float(row["dm_pc_cm3"])
-    time_ms = float(row["time_ms"])
+    dm                     = float(row["dm_pc_cm3"])
+    time_ms                = float(row["time_ms"])
     event["dm_min_pc_cm3"] = min(float(event["dm_min_pc_cm3"]), dm)
     event["dm_max_pc_cm3"] = max(float(event["dm_max_pc_cm3"]), dm)
-    event["time_min_ms"] = min(float(event["time_min_ms"]), time_ms)
-    event["time_max_ms"] = max(float(event["time_max_ms"]), time_ms)
+    event["time_min_ms"]   = min(float(event["time_min_ms"]), time_ms)
+    event["time_max_ms"]   = max(float(event["time_max_ms"]), time_ms)
     if float(row["sigma"]) <= float(event["sigma"]):
         return
     event.update(
@@ -649,11 +760,11 @@ def add_candidate_to_event_index(
     next_event_id: int,
     args: argparse.Namespace,
 ) -> int:
-    dm_tol = max(float(args.event_dedup_dm_tolerance), 1e-9)
-    time_tol = max(float(args.event_dedup_time_tolerance_ms), 1e-9)
-    dm = float(row["dm_pc_cm3"])
-    time_ms = float(row["time_ms"])
-    dm_bucket = math.floor(dm / dm_tol)
+    dm_tol      = max(float(args.event_dedup_dm_tolerance), 1e-9)
+    time_tol    = max(float(args.event_dedup_time_tolerance_ms), 1e-9)
+    dm          = float(row["dm_pc_cm3"])
+    time_ms     = float(row["time_ms"])
+    dm_bucket   = math.floor(dm / dm_tol)
     time_bucket = math.floor(time_ms / time_tol)
     for ii in range(dm_bucket - 1, dm_bucket + 2):
         for jj in range(time_bucket - 1, time_bucket + 2):
@@ -670,18 +781,22 @@ def add_candidate_to_event_index(
 
     next_event_id += 1
     event_id = f"{key[0]}_b{key[1]:02d}_{key[2]}_evt{next_event_id:05d}"
-    event = event_from_candidate(row, event_id)
+    event    = event_from_candidate(row, event_id)
     events.append(event)
     buckets.setdefault((dm_bucket, time_bucket), []).append(event)
     return next_event_id
 
 
 def cluster_events(candidates: list[dict], args: argparse.Namespace) -> list[dict]:
-    groups: dict[tuple[str, int, str], tuple[list[dict], dict[tuple[int, int], list[dict]], int]] = {}
+    groups: dict[
+        tuple[str, int, str], tuple[list[dict], dict[tuple[int, int], list[dict]], int]
+    ] = {}
     for row in candidates:
         key = candidate_key(row)
         events, buckets, next_event_id = groups.setdefault(key, ([], {}, 0))
-        next_event_id = add_candidate_to_event_index(row, key, events, buckets, next_event_id, args)
+        next_event_id = add_candidate_to_event_index(
+            row, key, events, buckets, next_event_id, args
+        )
         groups[key] = (events, buckets, next_event_id)
 
     events: list[dict] = []
@@ -737,7 +852,7 @@ def analyze(
                 ):
                     continue
                 dt_ms = event_dt_ms(event, row)
-                ddm = event_ddm(event, row)
+                ddm   = event_ddm(event, row)
                 score = (
                     abs(dt_ms) / max(args.source_time_tolerance_ms, 1e-6)
                     + abs(ddm) / max(args.source_dm_tolerance, 1e-6)
@@ -751,22 +866,33 @@ def analyze(
         for local_truth_index, event_index in local_assignments.items():
             assignments[truth_indices[local_truth_index]] = local_events[event_index]
 
-    used_events = {
-        str(event["event_id"])
-        for event in assignments.values()
-    }
+    used_events         = {str(event["event_id"]) for event in assignments.values()}
     matches: list[dict] = []
     for truth_index, row in enumerate(ordered_truth):
         best_event = assignments.get(truth_index)
-        detected = best_event is not None
+        detected   = best_event is not None
         if detected:
             dm_error = float(best_event["dm_pc_cm3"]) - float(row["dm_pc_cm3"])
-            toa_error_ms = (float(best_event["sample"]) - float(row["highest_freq_toa_file_raw_sample"])) * float(row.get("time_reso_seconds", best_event.get("dt_seconds", 4.9152e-05))) * 1000.0
-            localized = abs(dm_error) <= args.localize_dm_tolerance and abs(toa_error_ms) <= args.localize_time_tolerance_ms
+            toa_error_ms = (
+                (
+                    float(best_event["sample"])
+                    - float(row["highest_freq_toa_file_raw_sample"])
+                )
+                * float(
+                    row.get(
+                        "time_reso_seconds", best_event.get("dt_seconds", 4.9152e-05)
+                    )
+                )
+                * 1000.0
+            )
+            localized = (
+                abs(dm_error) <= args.localize_dm_tolerance
+                and abs(toa_error_ms) <= args.localize_time_tolerance_ms
+            )
         else:
-            dm_error = ""
+            dm_error     = ""
             toa_error_ms = ""
-            localized = False
+            localized    = False
 
         out = dict(row)
         out.update(
@@ -791,27 +917,67 @@ def analyze(
         if event["event_id"] in used_events:
             continue
         local_truth = truths_by_key.get(candidate_key(event), [])
-        if any(event_matches_truth(event, row, args.source_dm_tolerance, args.source_time_tolerance_ms) for row in local_truth):
+        if any(
+            event_matches_truth(
+                event, row, args.source_dm_tolerance, args.source_time_tolerance_ms
+            )
+            for row in local_truth
+        ):
             continue
-        assigned, _ = nearest_truth_with_distance(event, local_truth) if local_truth else (None, float("inf"))
+        assigned, _ = (
+            nearest_truth_with_distance(event, local_truth)
+            if local_truth
+            else (None, float("inf"))
+        )
         fp = dict(event)
         fp.update(
             {
                 "assigned_quantization": event["quantization"],
-                "assigned_injection_id": assigned.get("injection_id", "") if assigned else "",
-                "assigned_snr": assigned.get("snr", "") if assigned else "",
+                "assigned_injection_id": assigned.get("injection_id", "")
+                if assigned
+                else "",
+                "assigned_fluence_snr": (
+                    assigned.get("fluence_snr", "") if assigned else ""
+                ),
                 "assigned_dm_pc_cm3": assigned.get("dm_pc_cm3", "") if assigned else "",
-                "assigned_width_ms_fwhm": assigned.get("width_ms_fwhm", "") if assigned else "",
-                "assigned_bandwidth_mhz_fwhm": assigned.get("bandwidth_mhz_fwhm", "") if assigned else "",
-                "assigned_scattering_ms_at_1ghz": assigned.get("scattering_ms_at_1ghz", "") if assigned else "",
-                "assigned_center_freq_mhz": assigned.get("center_freq_mhz", "") if assigned else "",
-                "assigned_per_channel_peak_snr": assigned.get("per_channel_peak_snr", "") if assigned else "",
+                "assigned_width_ms_fwhm": assigned.get("width_ms_fwhm", "")
+                if assigned
+                else "",
+                "assigned_bandwidth_mhz_fwhm": assigned.get("bandwidth_mhz_fwhm", "")
+                if assigned
+                else "",
+                "assigned_scattering_ms_at_1ghz": assigned.get(
+                    "scattering_ms_at_1ghz", ""
+                )
+                if assigned
+                else "",
+                "assigned_center_freq_mhz": assigned.get("center_freq_mhz", "")
+                if assigned
+                else "",
+                "assigned_per_channel_peak_snr": assigned.get(
+                    "per_channel_peak_snr", ""
+                )
+                if assigned
+                else "",
                 "assigned_toa_delta_ms": (
-                    (float(event["sample"]) - float(assigned["highest_freq_toa_file_raw_sample"])) * float(assigned.get("time_reso_seconds", event.get("dt_seconds", 4.9152e-05))) * 1000.0
+                    (
+                        float(event["sample"])
+                        - float(assigned["highest_freq_toa_file_raw_sample"])
+                    )
+                    * float(
+                        assigned.get(
+                            "time_reso_seconds", event.get("dt_seconds", 4.9152e-05)
+                        )
+                    )
+                    * 1000.0
                     if assigned
                     else ""
                 ),
-                "assigned_dm_delta_pc_cm3": (float(event["dm_pc_cm3"]) - float(assigned["dm_pc_cm3"]) if assigned else ""),
+                "assigned_dm_delta_pc_cm3": (
+                    float(event["dm_pc_cm3"]) - float(assigned["dm_pc_cm3"])
+                    if assigned
+                    else ""
+                ),
                 "classifier_score": event["sigma"],
                 "detector_score": "",
             }
@@ -821,58 +987,144 @@ def analyze(
     return matches, false_positives
 
 
-def cell_table(matches: list[dict], false_positives: list[dict], parameter: str, bins: list[float]) -> list[dict]:
-    rows: list[dict] = []
+def detailed_tables(
+    matches: list[dict],
+    false_positives: list[dict],
+    specs: dict,
+) -> tuple[dict[str, list[dict]], list[dict]]:
+    """Build every parameter/SNR table with one pass over each input list.
+
+    The old implementation rescanned the complete false-positive list once for
+    every heat-map cell.  A low PRESTO threshold can produce tens of millions
+    of false positives, turning a linear aggregation into hundreds of full
+    Python scans.  Counter keys keep this operation linear in the input size.
+    """
+    injected: Counter[tuple[str, str, int, int]]       = Counter()
+    detected: Counter[tuple[str, str, int, int]]       = Counter()
+    false_positive: Counter[tuple[str, str, int, int]] = Counter()
+    snr_injected: Counter[tuple[str, int]]             = Counter()
+    snr_detected: Counter[tuple[str, int]]             = Counter()
+    snr_false_positive: Counter[tuple[str, int]]       = Counter()
+
+    for row in matches:
+        quant   = str(row.get("quantization", ""))
+        snr_bin = bin_index(float(row["fluence_snr"]), FLUENCE_SNR_BINS)
+        if quant not in QUANTIZATIONS or snr_bin is None:
+            continue
+        snr_injected[(quant, snr_bin)] += 1
+        if bool(row.get("detected")):
+            snr_detected[(quant, snr_bin)] += 1
+        for parameter, spec in specs.items():
+            param_bin = bin_index(float(row[parameter]), spec["bins"])
+            if param_bin is None:
+                continue
+            key = (parameter, quant, param_bin, snr_bin)
+            injected[key] += 1
+            if bool(row.get("detected")):
+                detected[key] += 1
+
+    for row in false_positives:
+        quant        = str(row.get("assigned_quantization", ""))
+        assigned_snr = row.get("assigned_fluence_snr")
+        if quant not in QUANTIZATIONS or assigned_snr in ("", None):
+            continue
+        snr_bin = bin_index(float(assigned_snr), FLUENCE_SNR_BINS)
+        if snr_bin is None:
+            continue
+        snr_false_positive[(quant, snr_bin)] += 1
+        for parameter, spec in specs.items():
+            assigned_value = row.get(f"assigned_{parameter}")
+            if assigned_value in ("", None):
+                continue
+            param_bin = bin_index(float(assigned_value), spec["bins"])
+            if param_bin is not None:
+                false_positive[(parameter, quant, param_bin, snr_bin)] += 1
+
+    tables: dict[str, list[dict]] = {}
+    for parameter, spec in specs.items():
+        bins             = spec["bins"]
+        rows: list[dict] = []
+        for quant in QUANTIZATIONS:
+            for y, (param_lo, param_hi) in enumerate(zip(bins[:-1], bins[1:])):
+                for x, (snr_lo, snr_hi) in enumerate(
+                    zip(FLUENCE_SNR_BINS[:-1], FLUENCE_SNR_BINS[1:])
+                ):
+                    key      = (parameter, quant, y, x)
+                    total    = injected[key]
+                    found    = detected[key]
+                    fp_count = false_positive[key]
+                    rows.append(
+                        {
+                            "quantization": quant,
+                            "parameter": parameter,
+                            "param_bin": y,
+                            "fluence_snr_bin": x,
+                            "param_low": param_lo,
+                            "param_high": param_hi,
+                            "fluence_snr_low": snr_lo,
+                            "fluence_snr_high": snr_hi,
+                            "n_injected": total,
+                            "n_detected": found,
+                            "n_false_positive_assigned": fp_count,
+                            "recall": found / total if total else "",
+                            "precision_proxy": (
+                                found / (found + fp_count) if found + fp_count else ""
+                            ),
+                        }
+                    )
+        tables[parameter] = rows
+
+    snr_rows: list[dict] = []
     for quant in QUANTIZATIONS:
-        q_matches = [row for row in matches if row.get("quantization") == quant]
-        q_fp = [row for row in false_positives if row.get("assigned_quantization") == quant]
-        for y, (param_lo, param_hi) in enumerate(zip(bins[:-1], bins[1:])):
-            for x, (snr_lo, snr_hi) in enumerate(zip(SNR_BINS[:-1], SNR_BINS[1:])):
-                subset = [
-                    row
-                    for row in q_matches
-                    if bin_index(float(row["snr"]), SNR_BINS) == x
-                    and bin_index(float(row[parameter]), bins) == y
-                ]
-                fp_subset = [
-                    row
-                    for row in q_fp
-                    if row.get("assigned_snr") not in ("", None)
-                    and row.get(f"assigned_{parameter}") not in ("", None)
-                    and bin_index(float(row["assigned_snr"]), SNR_BINS) == x
-                    and bin_index(float(row[f"assigned_{parameter}"]), bins) == y
-                ]
-                total = len(subset)
-                detected = sum(1 for row in subset if bool(row.get("detected")))
-                fp_count = len(fp_subset)
-                rows.append(
-                    {
-                        "quantization": quant,
-                        "parameter": parameter,
-                        "param_bin": y,
-                        "snr_bin": x,
-                        "param_low": param_lo,
-                        "param_high": param_hi,
-                        "snr_low": snr_lo,
-                        "snr_high": snr_hi,
-                        "n_injected": total,
-                        "n_detected": detected,
-                        "n_false_positive_assigned": fp_count,
-                        "recall": detected / total if total else "",
-                        "precision_proxy": detected / (detected + fp_count) if (detected + fp_count) else "",
-                    }
-                )
-    return rows
+        for x, (lo, hi) in enumerate(zip(FLUENCE_SNR_BINS[:-1], FLUENCE_SNR_BINS[1:])):
+            total    = snr_injected[(quant, x)]
+            found    = snr_detected[(quant, x)]
+            fp_count = snr_false_positive[(quant, x)]
+            snr_rows.append(
+                {
+                    "quantization": quant,
+                    "fluence_snr_low": lo,
+                    "fluence_snr_high": hi,
+                    "fluence_snr_center": math.sqrt(lo * hi),
+                    "n_injected": total,
+                    "n_detected": found,
+                    "n_false_positive_assigned": fp_count,
+                    "recall": found / total if total else np.nan,
+                    "precision_proxy": (
+                        found / (found + fp_count) if found + fp_count else np.nan
+                    ),
+                }
+            )
+    return tables, snr_rows
+
+
+def cell_table(
+    matches: list[dict],
+    false_positives: list[dict],
+    parameter: str,
+    bins: list[float],
+) -> list[dict]:
+    """Compatibility wrapper for callers that need one parameter table."""
+    tables, _ = detailed_tables(
+        matches,
+        false_positives,
+        {parameter: {"bins": bins}},
+    )
+    return tables[parameter]
 
 
 def summarize(matches: list[dict], false_positives: list[dict]) -> list[dict]:
     rows = []
     for quant in QUANTIZATIONS:
         subset = [row for row in matches if row.get("quantization") == quant]
-        fp = [row for row in false_positives if row.get("assigned_quantization") == quant]
-        total = len(subset)
+        fp = [
+            row for row in false_positives if row.get("assigned_quantization") == quant
+        ]
+        total    = len(subset)
         detected = sum(1 for row in subset if bool(row.get("detected")))
-        localized = sum(1 for row in subset if bool(row.get("localized_within_tolerance")))
+        localized = sum(
+            1 for row in subset if bool(row.get("localized_within_tolerance"))
+        )
         rows.append(
             {
                 "quantization": quant,
@@ -882,7 +1134,9 @@ def summarize(matches: list[dict], false_positives: list[dict]) -> list[dict]:
                 "false_positive_count": len(fp),
                 "recall": detected / total if total else "",
                 "localized_fraction": localized / total if total else "",
-                "precision_proxy": detected / (detected + len(fp)) if detected + len(fp) else "",
+                "precision_proxy": detected / (detected + len(fp))
+                if detected + len(fp)
+                else "",
             }
         )
     return rows
@@ -901,50 +1155,70 @@ def aggregate_and_plot(args: argparse.Namespace, truth: list[dict]) -> None:
     if not processed_keys:
         processed_keys = {candidate_key(row) for row in events}
     matches, false_positives = analyze(truth, events, args, processed_keys)
-    aggregate = args.output_root / "aggregate"
-    analysis = args.output_root / "analysis"
-    figures = args.output_root / "publication_figures"
+    aggregate                = args.output_root / "aggregate"
+    analysis                 = args.output_root / "analysis"
+    figures                  = args.output_root / "publication_figures"
 
     match_fields = sorted({key for row in matches for key in row.keys()})
-    fp_fields = sorted({key for row in false_positives for key in row.keys()})
+    fp_fields    = sorted({key for row in false_positives for key in row.keys()})
     event_fields = sorted({key for row in events for key in row.keys()})
     write_csv(aggregate / "all_matches.csv", matches, match_fields)
-    write_csv(aggregate / "all_false_positives.csv", false_positives, fp_fields or ["event_id"])
+    write_csv(
+        aggregate / "all_false_positives.csv",
+        false_positives,
+        fp_fields or ["event_id"],
+    )
     write_csv(aggregate / "all_events.csv", events, event_fields or ["event_id"])
 
     summary = summarize(matches, false_positives)
-    write_csv(aggregate / "summary.csv", summary, ["quantization", "truth_count", "detected_count", "localized_count", "false_positive_count", "recall", "localized_fraction", "precision_proxy"])
+    write_csv(
+        aggregate / "summary.csv",
+        summary,
+        [
+            "quantization",
+            "truth_count",
+            "detected_count",
+            "localized_count",
+            "false_positive_count",
+            "recall",
+            "localized_fraction",
+            "precision_proxy",
+        ],
+    )
 
     specs = param_specs_for_truth(matches)
     cell_fields = [
         "quantization",
         "parameter",
         "param_bin",
-        "snr_bin",
+        "fluence_snr_bin",
         "param_low",
         "param_high",
-        "snr_low",
-        "snr_high",
+        "fluence_snr_low",
+        "fluence_snr_high",
         "n_injected",
         "n_detected",
         "n_false_positive_assigned",
         "recall",
         "precision_proxy",
     ]
+    tables, snr_rows      = detailed_tables(matches, false_positives, specs)
     all_cells: list[dict] = []
     for parameter, spec in specs.items():
-        cells = cell_table(matches, false_positives, parameter, spec["bins"])
+        cells = tables[parameter]
         all_cells.extend(cells)
         write_csv(analysis / f"cells_{parameter}.csv", cells, cell_fields)
         plot_parameter_cells(parameter, spec, cells, figures / "parameter_maps")
     write_csv(analysis / "cells_all_parameters.csv", all_cells, cell_fields)
-    plot_snr_rows(snr_rows_from_matches(matches, false_positives), figures / "summary")
+    plot_snr_rows(snr_rows, figures / "summary")
 
     run_summary = {
         "output_root": str(args.output_root),
         "sim_root": str(args.sim_root),
         "truth_root": str(args.truth_root),
-        "candidate_count": int(sum(int(row.get("candidate_count", 0) or 0) for row in statuses)),
+        "candidate_count": int(
+            sum(int(row.get("candidate_count", 0) or 0) for row in statuses)
+        ),
         "event_count": len(events),
         "job_count": len(statuses),
         "failed_jobs": int(sum(1 for row in statuses if row.get("status") == "failed")),
@@ -963,7 +1237,9 @@ def aggregate_and_plot(args: argparse.Namespace, truth: list[dict]) -> None:
         "source_dm_tolerance": args.source_dm_tolerance,
         "source_time_tolerance_ms": args.source_time_tolerance_ms,
     }
-    (args.output_root / "run_summary.json").write_text(json.dumps(run_summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (args.output_root / "run_summary.json").write_text(
+        json.dumps(run_summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def parse_batches(text: str) -> list[int]:
@@ -981,26 +1257,48 @@ def parse_batches(text: str) -> list[int]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument(
         "--input-run-root",
         type=Path,
         default=None,
         help="Legacy layout root containing simdata/ and truth_archive/; ignored when --sim-root/--truth-root are set.",
     )
-    parser.add_argument("--sim-root", type=Path, default=None, help="Shared injected FITS root, usually ../simdata.")
-    parser.add_argument("--truth-root", type=Path, default=None, help="Shared truth archive root, usually ../truth_archive.")
+    parser.add_argument(
+        "--sim-root",
+        type    = Path,
+        default = None,
+        help    = "Shared injected FITS root, usually ../simdata.",
+    )
+    parser.add_argument(
+        "--truth-root",
+        type    = Path,
+        default = None,
+        help    = "Shared truth archive root, usually ../truth_archive.",
+    )
     parser.add_argument("--run-label", type=str, default=DEFAULT_RUN_LABEL)
     parser.add_argument("--output-root", type=Path, default=None)
     parser.add_argument("--scratch-root", type=Path, default=DEFAULT_SCRATCH_ROOT)
     parser.add_argument("--batches", type=parse_batches, default=parse_batches("0-19"))
-    parser.add_argument("--quantizations", type=lambda s: [x.strip() for x in s.split(",") if x.strip()], default=list(QUANTIZATIONS))
+    parser.add_argument(
+        "--quantizations",
+        type    = lambda s: [x.strip() for x in s.split(",") if x.strip()],
+        default = list(QUANTIZATIONS),
+    )
     parser.add_argument("--workers", type=int, default=8)
-    parser.add_argument("--gpu-ids", type=lambda s: [int(x) for x in s.split(",") if x.strip()], default=[0, 1, 2, 3, 4, 5, 6, 7])
+    parser.add_argument(
+        "--gpu-ids",
+        type    = lambda s: [int(x) for x in s.split(",") if x.strip()],
+        default = [0, 1, 2, 3, 4, 5, 6, 7],
+    )
     parser.add_argument("--limit-jobs", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--mode", choices=["blind", "known-window"], default="blind")
-    parser.add_argument("--search-all-files", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--search-all-files", action=argparse.BooleanOptionalAction, default=True
+    )
 
     parser.add_argument("--dm-window", type=float, default=60.0)
     parser.add_argument("--dm-step", type=float, default=1.0)
@@ -1016,10 +1314,17 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--rfifind-time", type=float, default=1.0)
     parser.add_argument("--skip-rfifind", action="store_true")
-    parser.add_argument("--numout", type=int, default=131072, help="Samples per center FITS file. PRESTO receives this value multiplied by the number of context files.")
+    parser.add_argument(
+        "--numout",
+        type    = int,
+        default = 131072,
+        help    = "Samples per center FITS file. PRESTO receives this value multiplied by the number of context files.",
+    )
     parser.add_argument("--context-left-files", type=int, default=1)
     parser.add_argument("--context-right-files", type=int, default=1)
-    parser.add_argument("--crop-dat-to-center", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--crop-dat-to-center", action=argparse.BooleanOptionalAction, default=True
+    )
     parser.add_argument("--nsub", type=int, default=1024)
     parser.add_argument("--retry-nsub", type=int, default=4096)
     parser.add_argument("--downsamp", type=int, default=1)
@@ -1035,19 +1340,29 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
 
     if args.output_root is None:
-        stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        stamp            = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         args.output_root = DEFAULT_OUTPUT_BASE / "results" / f"presto_blind_{stamp}"
     if args.context_left_files < 0 or args.context_right_files < 0:
-        raise SystemExit("--context-left-files and --context-right-files must be non-negative")
+        raise SystemExit(
+            "--context-left-files and --context-right-files must be non-negative"
+        )
     if args.sim_root is None:
-        args.sim_root = args.input_run_root / "simdata" if args.input_run_root is not None else DEFAULT_SIM_ROOT
+        args.sim_root = (
+            args.input_run_root / "simdata"
+            if args.input_run_root is not None
+            else DEFAULT_SIM_ROOT
+        )
     if args.truth_root is None:
-        args.truth_root = args.input_run_root / "truth_archive" if args.input_run_root is not None else DEFAULT_TRUTH_ROOT
+        args.truth_root = (
+            args.input_run_root / "truth_archive"
+            if args.input_run_root is not None
+            else DEFAULT_TRUTH_ROOT
+        )
     if args.input_run_root is not None:
         args.input_run_root = args.input_run_root.resolve()
-    args.sim_root = args.sim_root.resolve()
-    args.truth_root = args.truth_root.resolve()
-    args.output_root = args.output_root.resolve()
+    args.sim_root     = args.sim_root.resolve()
+    args.truth_root   = args.truth_root.resolve()
+    args.output_root  = args.output_root.resolve()
     args.scratch_root = args.scratch_root.resolve()
     args.output_root.mkdir(parents=True, exist_ok=True)
     args.scratch_root.mkdir(parents=True, exist_ok=True)
@@ -1055,12 +1370,14 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    args = parse_args()
+    args   = parse_args()
     config = vars(args).copy()
     for key, value in list(config.items()):
         if isinstance(value, Path):
             config[key] = str(value)
-    (args.output_root / "campaign_config.json").write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (args.output_root / "campaign_config.json").write_text(
+        json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
     truth = load_truth_archive(args.truth_root, args.batches, args.quantizations)
     if not truth:
@@ -1073,10 +1390,16 @@ def main() -> None:
     if not args.aggregate_only:
         jobs = build_jobs(args, truth)
         print(f"[campaign] output_root={args.output_root}", flush=True)
-        print(f"[campaign] sim_root={args.sim_root} truth_root={args.truth_root}", flush=True)
-        print(f"[campaign] truth_rows={len(truth)} jobs={len(jobs)} workers={args.workers} gpu_ids={args.gpu_ids}", flush=True)
+        print(
+            f"[campaign] sim_root={args.sim_root} truth_root={args.truth_root}",
+            flush=True,
+        )
+        print(
+            f"[campaign] truth_rows={len(truth)} jobs={len(jobs)} workers={args.workers} gpu_ids={args.gpu_ids}",
+            flush=True,
+        )
         failures = 0
-        done = 0
+        done     = 0
         with ProcessPoolExecutor(max_workers=args.workers) as pool:
             futures = [pool.submit(run_job, job, vars(args)) for job in jobs]
             for future in as_completed(futures):
@@ -1092,11 +1415,21 @@ def main() -> None:
                         flush=True,
                     )
         if failures:
-            print(f"[WARN] {failures} jobs failed; aggregating successful jobs only.", flush=True)
+            print(
+                f"[WARN] {failures} jobs failed; aggregating successful jobs only.",
+                flush=True,
+            )
 
     aggregate_and_plot(args, truth)
-    print(json.dumps(json.loads((args.output_root / "run_summary.json").read_text()), indent=2), flush=True)
+    print(
+        json.dumps(
+            json.loads((args.output_root / "run_summary.json").read_text()), indent=2
+        ),
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
     main()
+
+# fmt: on

@@ -15,6 +15,7 @@
 | 固定配置生产盲搜 | `d-center-binary-gate.py` | 脚本底部写路径、模型和 GPU section；适合 PBS 渲染。 |
 | 原始分辨率 GPU 盲搜 | `d-center-binary-gate-new.py` | 调用 new core；细通道消色散后再下采样，DM 参数使用真实物理单位。 |
 | 已知 DM / 候选 DM follow-up | `d-dm-time-predown.py` | 固定 DM，多时间下采样倍率，binary 分类。 |
+| 压缩观测 fixed-DM 批处理 | `search_xzdata/run_fixed_dm_xz.sh` | 校验并解压 `.fits.xz`、按 manifest 分 section 提交搜索。 |
 | PBS 批量提交 | `s-pbsspt.py` | 生成并提交多 section 作业，也可渲染目标专用 gate 脚本。 |
 | fixed-DM binary 对比 | `t-binary-bench.sh` | 比较不同 binary 分类器的真实输出。 |
 
@@ -30,6 +31,7 @@ new core 时修改 `d-center-binary-gate-new.py` 底部配置，并用 `s-pbsspt
 | `d-center-binary-core.py` | 两阶段盲搜核心：CuPy 消色散、DM-time 图、CenterNet 检测、candidate cutout、binary 分类和保存。 |
 | `d-center-binary-core-new.py` | 原始时间/频率分辨率上传 GPU 后再消色散和下采样的新版 core；DM 配置全部使用物理单位。 |
 | `d-dm-time-predown.py` | fixed-DM follow-up：单 DM 消色散、多尺度图片生成、binary 分类。 |
+| `search_xzdata/` | 可复用的 `.fits.xz` fixed-DM 控制器；目标专用 preset 和 manifest 仅保存在本地。 |
 | `t-blind-section.py` | 命令行式盲搜 section wrapper。 |
 | `t-blind-batch.sh` | 多 GPU 盲搜批量测试 wrapper。 |
 | `t-binary-bench.sh` | fixed-DM binary 模型输出对比。 |
@@ -237,6 +239,7 @@ process_config = ProcessConfig(
     dm_step=1,         # 相邻 trial 的物理 DM 间隔
     block_size=4096,
     time_factor=8,
+    fits_prefetch_workers=2,
 )
 ```
 
@@ -248,11 +251,28 @@ process_config = ProcessConfig(
 `dm_range / dm_step` 必须是正整数且是 1024 的整数倍。配置不能完整切块时
 程序不会补零，而是报错并给出最近的合法 `dm_range`，避免空白行改变图像动态范围。
 常规 4096-DM 盲搜写作 `dm_min=0, dm_range=4096, dm_step=1`。
+当搜索区间包含负 DM 时，gate 会根据 FITS 头中的频率范围、`TBIN` 和单文件长度
+自动计算前向、后向 overlap；前置 FITS 只提供消色散余量，不会被重复搜索。观测
+起点确实缺少前置数据时使用噪声补齐，不会复制首个 FITS 形成周期性伪结构。
+
+`fits_prefetch_workers` 同时控制 FITS 读取线程数和未来文件预读深度。当前窗口及随后
+若干文件会先并行排队，GPU 处理时继续预读；这只改变 I/O 调度，不改变文件顺序或搜索
+数值。gpu16 八卡并发实测以默认值 `2` 的整机吞吐最好。单卡独占存储时可试 `4`，但
+每个已解码的 4096-channel FITS 约占 1 GiB 主机内存，多卡任务不要盲目提高该值。
 
 FITS 解码和偏振相加在 CPU 完成，原始时间/频率分辨率的 `uint16` 数据随后上传一次。
 动态 RFI、细通道消色散、时间/频率下采样、DM-time 归一化、目标检测、候选 cutout
 和 binary 推理都在 GPU 上完成。CuPy 与 PyTorch 之间通过 DLPack 零拷贝共享显存；
 只有 detector 解码后的少量候选坐标、binary 分数，以及最终正样本保存时的数据回到 CPU。
+CenterNet 的浮点中心坐标会保留到 DM/TOA 换算；binary cutout 按
+`classifier_batch_size` 分批生成、分类并释放，不会把一个时间片的全部候选同时堆在显存。
+每批只分配一份 CuPy 缓冲，cutout kernel 直接写入各行，再以一次 DLPack 零拷贝交给
+PyTorch；full/low/high 中起始采样和逐细通道整数时移完全相同的候选会共用同一份 cutout。
+RFI 统计量和有效通道计数也留在 GPU 上，不在每个搜索块触发 CPU 同步。
+
+频率输入不写死为 4096 通道：`NCHAN` 可以是 512 的任意正整数倍（常见的 1024、
+2048、4096、8192 都可），GPU 消色散后统一平均到 512 通道。`OBSBW < 0` 的 FITS
+会在读取时翻转为升频序，保证时移矩阵和绘图频率轴使用同一方向。
 
 多个数据根可以重复传入 `--data-path`。生成后把 gate 中的 `task_manifest` 指向该
 JSON；更换数据集时应重新生成，避免继续使用旧任务清单。
@@ -312,6 +332,9 @@ candidate_manifest.jsonl
 | `signal_mjd` | 候选绝对 MJD，等于 `block_start_mjd + toa_sec / 86400`。 |
 | `dm` | 检测图中心换算出的 DM，可用于初步切出信号。 |
 | `jpg_path` / `npy_path` | 对应 review 图和 DM-time numpy 文件。 |
+
+review 图的两幅时间轴分别判断总时长：小于 1000 ms 时使用毫秒，达到 1000 ms
+时自动改用秒；这只改变刻度显示，不改变 detector 或 binary 的输入时间范围。
 
 合并所有 beam 的 manifest：
 
@@ -374,6 +397,10 @@ Fixed-DM 输出布局：
 FRB20240114A_tracking-M01_0086-0014-550.453248.jpg
 FRB20240114A_tracking-M01_0086-0014.npy
 ```
+
+批量处理压缩观测时使用 [`search_xzdata/`](search_xzdata/README.md)。通用控制器从环境变量和
+TSV manifest 读取目标、DM、模型、PBS 节点与 section 数；含真实观测路径和集群配置的
+目标专用 preset、manifest 应仅保存在本地，不纳入版本控制。
 
 ## 数据准备
 

@@ -1,3 +1,5 @@
+# fmt: off
+
 """从完整 PRESTO event 表导出可本地重算阈值的紧凑结果包。
 
 完整 PRESTO 搜索会产生很大的 candidate/event 表。这个脚本保留阈值扫描必需的
@@ -16,7 +18,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from search_utils import (
-    SNR_BINS,
+    FLUENCE_SNR_BINS,
     bin_index,
     candidate_key,
     event_matches_truth,
@@ -24,6 +26,7 @@ from search_utils import (
     param_specs_for_truth,
     truth_key,
 )
+
 TRUTH_FIELDS = [
     "injection_id",
     "quantization",
@@ -31,7 +34,7 @@ TRUTH_FIELDS = [
     "output_file_stem",
     "highest_freq_toa_file_raw_sample",
     "time_reso_seconds",
-    "snr",
+    "fluence_snr",
     "dm_pc_cm3",
     "width_ms_fwhm",
     "bandwidth_mhz_fwhm",
@@ -61,7 +64,10 @@ def load_truth_manifest(path: Path) -> tuple[list[dict], dict]:
                 rows.append(json.loads(line))
     specs = param_specs_for_truth(rows)
     for row in rows:
-        row["_snr_bin"] = bin_index(float(row["snr"]), SNR_BINS)
+        row["_fluence_snr_bin"] = bin_index(
+            float(row["fluence_snr"]),
+            FLUENCE_SNR_BINS,
+        )
         for parameter, spec in specs.items():
             row[f"_bin_{parameter}"] = bin_index(float(row[parameter]), spec["bins"])
     return rows, specs
@@ -89,7 +95,7 @@ def main() -> None:
     args = parser.parse_args()
 
     result_root = args.result_root.resolve()
-    output_dir = args.output_dir.resolve()
+    output_dir  = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     truth, specs = load_truth_manifest(result_root / "truth_manifest_used.jsonl")
@@ -106,19 +112,31 @@ def main() -> None:
     fp_without_truth = 0
     started = time.time()
 
-    with (result_root / "aggregate" / "all_events.csv").open("r", encoding="utf-8", newline="") as src, gzip.open(output_dir / "near_truth_events.csv.gz", "wt", encoding="utf-8", newline="") as near_handle:
-        reader = csv.DictReader(src)
+    with (
+        (result_root / "aggregate" / "all_events.csv").open(
+            "r", encoding="utf-8", newline=""
+        ) as src,
+        gzip.open(
+            output_dir / "near_truth_events.csv.gz", "wt", encoding="utf-8", newline=""
+        ) as near_handle,
+    ):
+        reader      = csv.DictReader(src)
         near_writer = csv.DictWriter(near_handle, fieldnames=EVENT_FIELDS)
         near_writer.writeheader()
         for event in reader:
             events_total += 1
-            key = candidate_key(event)
+            key         = candidate_key(event)
             local_truth = truth_by_key.get(key, [])
-            sig = sigma_centi(event["sigma"])
-            near = bool(local_truth) and any(event_matches_truth(event, row, args.source_dm_tolerance, args.source_time_tolerance_ms) for row in local_truth)
+            sig         = sigma_centi(event["sigma"])
+            near = bool(local_truth) and any(
+                event_matches_truth(
+                    event, row, args.source_dm_tolerance, args.source_time_tolerance_ms
+                )
+                for row in local_truth
+            )
             if near:
                 near_total += 1
-                out = {field: event.get(field, "") for field in EVENT_FIELDS}
+                out                = {field: event.get(field, "") for field in EVENT_FIELDS}
                 out["sigma_centi"] = sig
                 near_writer.writerow(out)
             else:
@@ -127,28 +145,81 @@ def main() -> None:
                 fp_total_hist[(quant, sig)] += 1
                 if local_truth:
                     assigned = nearest_truth(event, local_truth)
-                    if assigned is not None and assigned.get("_snr_bin") is not None:
+                    if (
+                        assigned is not None
+                        and assigned.get("_fluence_snr_bin") is not None
+                    ):
                         for parameter, spec in specs.items():
                             param_bin = assigned.get(f"_bin_{parameter}")
                             if param_bin is not None:
-                                fp_cell_hist[(parameter, quant, sig, int(assigned["_snr_bin"]), int(param_bin))] += 1
+                                fp_cell_hist[
+                                    (
+                                        parameter,
+                                        quant,
+                                        sig,
+                                        int(assigned["_fluence_snr_bin"]),
+                                        int(param_bin),
+                                    )
+                                ] += 1
                 else:
                     fp_without_truth += 1
             if events_total % args.progress_every == 0:
                 elapsed = max(time.time() - started, 1e-6)
-                print(json.dumps({"events": events_total, "near": near_total, "fp": fp_total, "events_per_second": events_total / elapsed}, sort_keys=True), flush=True)
+                print(
+                    json.dumps(
+                        {
+                            "events": events_total,
+                            "near": near_total,
+                            "fp": fp_total,
+                            "events_per_second": events_total / elapsed,
+                        },
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
 
-    with (output_dir / "fp_total_hist.csv").open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["quantization", "sigma_centi", "count"])
+    with (output_dir / "fp_total_hist.csv").open(
+        "w", encoding="utf-8", newline=""
+    ) as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=["quantization", "sigma_centi", "count"]
+        )
         writer.writeheader()
         for (quant, sig), count in sorted(fp_total_hist.items()):
             writer.writerow({"quantization": quant, "sigma_centi": sig, "count": count})
 
-    with (output_dir / "fp_cell_hist.csv").open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["parameter", "quantization", "sigma_centi", "snr_bin", "param_bin", "count"])
+    with (output_dir / "fp_cell_hist.csv").open(
+        "w", encoding="utf-8", newline=""
+    ) as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "parameter",
+                "quantization",
+                "sigma_centi",
+                "fluence_snr_bin",
+                "param_bin",
+                "count",
+            ],
+        )
         writer.writeheader()
-        for (parameter, quant, sig, snr_bin, param_bin), count in sorted(fp_cell_hist.items()):
-            writer.writerow({"parameter": parameter, "quantization": quant, "sigma_centi": sig, "snr_bin": snr_bin, "param_bin": param_bin, "count": count})
+        for (
+            parameter,
+            quant,
+            sig,
+            fluence_snr_bin,
+            param_bin,
+        ), count in sorted(fp_cell_hist.items()):
+            writer.writerow(
+                {
+                    "parameter": parameter,
+                    "quantization": quant,
+                    "sigma_centi": sig,
+                    "fluence_snr_bin": fluence_snr_bin,
+                    "param_bin": param_bin,
+                    "count": count,
+                }
+            )
 
     metadata = {
         "result_root": str(result_root),
@@ -159,7 +230,7 @@ def main() -> None:
         "false_positive_events_without_local_truth": fp_without_truth,
         "source_dm_tolerance": args.source_dm_tolerance,
         "source_time_tolerance_ms": args.source_time_tolerance_ms,
-        "snr_bins": SNR_BINS,
+        "fluence_snr_bins": FLUENCE_SNR_BINS,
         "param_specs": specs,
         "created_files": [
             "truth_slim.csv.gz",
@@ -169,9 +240,13 @@ def main() -> None:
             "metadata.json",
         ],
     }
-    (output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (output_dir / "metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(json.dumps(metadata, indent=2, sort_keys=True), flush=True)
 
 
 if __name__ == "__main__":
     main()
+
+# fmt: on

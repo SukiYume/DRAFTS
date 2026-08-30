@@ -6,6 +6,9 @@ range.
 The searched FITS live in the benchmark-level `simdata/` directory, and the
 truth manifests live in the benchmark-level `truth_archive/` directory.  DL
 `runs/` directories are search outputs only.
+All injection-strength axes use the truth-manifest `fluence_snr` field: the
+ideal matched-filter S/N of the whitened frequency-time template, sampled
+log-uniformly from 3 to 100 sigma.
 
 Start with the [DRAFTS installation guide](../../README.en.md#quick-start) and
 the [injection benchmark workflow](../README.md). This page covers only the
@@ -19,6 +22,7 @@ sweeps.
 | `run_search.py` | Run the full blind PRESTO search, cluster candidates into events, and write aggregate tables. |
 | `export_threshold_data.py` | Export a compact local threshold-sweep package from the full event table. |
 | `sweep_thresholds.py` | Recompute metrics and figures for sigma thresholds from the compact package. |
+| `finalize_existing_run.py` | Validate and finish an interrupted post-processing stage from existing aggregate files. |
 | `search_utils.py` | Shared parameter bins, CSV helpers, and the only PRESTO plotting implementation. |
 | `../matching.py` | Sparse maximum-cardinality/minimum-cost truth-event matching shared with the DRAFTS analysis. |
 
@@ -130,7 +134,7 @@ Key outputs:
 - `events/<quantization>/bXX/*.jsonl`
 - `analysis/cells_*.csv`
 - `publication_figures/parameter_maps/*_recall_precision.png`
-- `publication_figures/summary/snr_recall_precision.png`
+- `publication_figures/summary/fluence_snr_recall_precision.png`
 - `run_summary.json`
 
 ## Export and sweep sigma thresholds
@@ -147,8 +151,10 @@ python export_threshold_data.py \
 ```
 
 The package contains slim truth rows, near-truth events, false-positive
-histograms, and metadata. Recompute metrics and figures without rerunning
-PRESTO:
+histograms, and metadata. The exporter reads the large event CSV once and does
+not load it into memory. Recompute metrics and figures without rerunning
+PRESTO; the sweep uses the same maximum-cardinality/minimum-cost assignment as
+the primary search:
 
 ```bash
 python sweep_thresholds.py \
@@ -163,3 +169,20 @@ python sweep_thresholds.py \
 
 Use a new `--output-dir` when comparing threshold grids so one sweep does not
 overwrite another.
+
+If the search and aggregate CSV files completed but the original detailed
+analysis was interrupted, reconstruct sigma 3 first and validate it against
+the authoritative `aggregate/summary.csv`:
+
+```bash
+python finalize_existing_run.py \
+  --result-root "$OUT_ROOT" \
+  --package-dir "$OUT_ROOT/threshold_sweep_package" \
+  --threshold-sweep-dir "$OUT_ROOT/threshold_sweeps" \
+  --threshold 3
+```
+
+The finalizer refuses to write `run_summary.json` unless every primary and
+reconstructed count/rate agrees and the package event totals agree with the
+per-job status files. It copies only the reconstructed analysis tables and
+figures; the large aggregate CSV files are left untouched.

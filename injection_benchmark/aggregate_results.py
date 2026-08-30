@@ -1,13 +1,15 @@
-"""跨批次汇总注入评估结果，并绘制 S/N–参数二维热图。
+# fmt: off
+
+"""跨批次汇总注入评估结果，并绘制 fluence-S/N–参数二维热图。
 
 每次搜索会产出一个 ``analysis/<batch>_<quantization>/`` 目录。本脚本把这些
-单批 CSV 合并，再画 recall 和"precision 代理"的 S/N–参数热图：
+单批 CSV 合并，再画 recall 和"precision 代理"的 fluence-S/N–参数热图：
 
 * recall = cell 内被匹配的注入源 / cell 内注入源总数；
 * precision_proxy = 被匹配的注入源 / (被匹配的注入源 + 归到该 cell 的误报事件)。
 
 之所以叫"代理"：误报本身没有注入 S/N、宽度等真值参数，这里把每个误报硬归到
-最近注入源的参数 cell，才能让它出现在 S/N–参数平面上。误报单位是去重后的
+最近注入源的参数 cell，才能让它出现在 fluence-S/N–参数平面上。误报单位是去重后的
 检测事件，不是来自不同 frequency split / 邻近 DM chunk 的单条候选。
 
 重要口径说明：背景是真实望远镜数据，含真实暴发和 RFI，所以 precision_proxy 把
@@ -31,9 +33,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-
-QUANTIZATIONS = ("raw8", "packed2")
-SNR_BINS = [5, 7, 10, 15, 22, 33, 50, 75, 100]
+QUANTIZATIONS    = ("raw8", "packed2")
+FLUENCE_SNR_BINS = [3, 5, 7, 10, 15, 22, 33, 50, 75, 100]
 PARAM_SPECS = {
     "dm_pc_cm3": {
         "label": "DM (pc cm$^{-3}$)",
@@ -81,7 +82,9 @@ def write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
 
 def write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def parse_bool(value: object) -> bool:
@@ -98,9 +101,9 @@ def finite_float(row: dict, key: str) -> float | None:
 
 def detect_quantization(path: Path, row: dict, prefix: str = "") -> str:
     """判断该行属于 raw8 还是 packed2：优先看字段值，否则从路径名兜底。"""
-    key = f"{prefix}quantization" if prefix else "quantization"
-    value = str(row.get(key, "")).strip()
-    text = str(path).lower()
+    key      = f"{prefix}quantization" if prefix else "quantization"
+    value    = str(row.get(key, "")).strip()
+    text     = str(path).lower()
     inferred = "packed2" if "packed2" in text else "raw8" if "raw8" in text else ""
     if value in QUANTIZATIONS:
         if inferred and value != inferred:
@@ -115,17 +118,19 @@ def detect_quantization(path: Path, row: dict, prefix: str = "") -> str:
 
 def load_campaign_tables(analysis_root: Path) -> tuple[list[dict], list[dict]]:
     """递归收集所有单批的 matches.csv 与 false_positives.csv，并标注量化类型。"""
-    matches: list[dict] = []
+    matches: list[dict]         = []
     false_positives: list[dict] = []
     for path in sorted(analysis_root.glob("**/matches.csv")):
         for row in read_csv(path):
             row["source_analysis_dir"] = str(path.parent)
-            row["quantization"] = detect_quantization(path, row)
+            row["quantization"]        = detect_quantization(path, row)
             matches.append(row)
     for path in sorted(analysis_root.glob("**/false_positives.csv")):
         for row in read_csv(path):
             row["source_analysis_dir"] = str(path.parent)
-            row["assigned_quantization"] = detect_quantization(path, row, prefix="assigned_")
+            row["assigned_quantization"] = detect_quantization(
+                path, row, prefix="assigned_"
+            )
             false_positives.append(row)
     return matches, false_positives
 
@@ -167,20 +172,20 @@ def cell_tables(
     parameter_bins: list[float],
     quantization: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """在 (参数 × S/N) 网格里统计每格的 recall 与 precision_proxy。
+    """在 (参数 × fluence S/N) 网格里统计每格的 recall 与 precision_proxy。
 
     返回 (recall, precision, total, fp) 四个二维数组：total 为注入数、fp 为
     归到该格的误报数；recall=detected/total，precision=detected/(detected+fp)。
     """
-    shape = (len(parameter_bins) - 1, len(SNR_BINS) - 1)
-    total = np.zeros(shape, dtype=int)
+    shape    = (len(parameter_bins) - 1, len(FLUENCE_SNR_BINS) - 1)
+    total    = np.zeros(shape, dtype=int)
     detected = np.zeros(shape, dtype=int)
-    fp = np.zeros(shape, dtype=int)
+    fp       = np.zeros(shape, dtype=int)
 
     for row in matches:
         if row.get("quantization") != quantization:
             continue
-        x = bin_index(finite_float(row, "snr"), SNR_BINS)
+        x = bin_index(finite_float(row, "fluence_snr"), FLUENCE_SNR_BINS)
         y = bin_index(finite_float(row, parameter), parameter_bins)
         if x is None or y is None:
             continue
@@ -192,18 +197,23 @@ def cell_tables(
     for row in false_positives:
         if row.get("assigned_quantization") != quantization:
             continue
-        x = bin_index(finite_float(row, "assigned_snr"), SNR_BINS)
+        x = bin_index(
+            finite_float(row, "assigned_fluence_snr"),
+            FLUENCE_SNR_BINS,
+        )
         y = bin_index(finite_float(row, assigned_key), parameter_bins)
         if x is None or y is None:
             continue
         fp[y, x] += 1
 
-    recall = np.divide(detected, total, out=np.full(shape, np.nan, dtype=float), where=total > 0)
+    recall = np.divide(
+        detected, total, out=np.full(shape, np.nan, dtype=float), where=total > 0
+    )
     precision = np.divide(
         detected,
         detected + fp,
-        out=np.full(shape, np.nan, dtype=float),
-        where=(detected + fp) > 0,
+        out   = np.full(shape, np.nan, dtype=float),
+        where = (detected + fp) > 0,
     )
     return recall, precision, total, fp
 
@@ -212,13 +222,21 @@ def draw_contours(ax, values: np.ndarray, levels: Iterable[float]) -> None:
     valid = np.isfinite(values)
     if valid.sum() < 4:
         return
-    filled = values.copy()
-    finite_values = filled[valid]
+    filled         = values.copy()
+    finite_values  = filled[valid]
     filled[~valid] = float(np.nanmedian(finite_values))
-    x = np.arange(values.shape[1])
-    y = np.arange(values.shape[0])
+    x              = np.arange(values.shape[1])
+    y              = np.arange(values.shape[0])
     try:
-        contours = ax.contour(x, y, filled, levels=list(levels), colors="white", linewidths=0.8, alpha=0.85)
+        contours = ax.contour(
+            x,
+            y,
+            filled,
+            levels     = list(levels),
+            colors     = "white",
+            linewidths = 0.8,
+            alpha      = 0.85,
+        )
         ax.clabel(contours, inline=True, fontsize=7, fmt="%.2f")
     except ValueError:
         return
@@ -230,7 +248,11 @@ def annotate_counts(ax, values: np.ndarray, counts: np.ndarray) -> None:
             if counts[y, x] <= 0:
                 continue
             value = values[y, x]
-            label = f"{value:.2f}\nn={counts[y, x]}" if np.isfinite(value) else f"n={counts[y, x]}"
+            label = (
+                f"{value:.2f}\nn={counts[y, x]}"
+                if np.isfinite(value)
+                else f"n={counts[y, x]}"
+            )
             color = "white" if np.nan_to_num(value, nan=0.0) < 0.55 else "black"
             ax.text(x, y, label, ha="center", va="center", fontsize=6.8, color=color)
 
@@ -247,13 +269,23 @@ def plot_metric_pair(
 ) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(14.5, 5.2), constrained_layout=True)
     for ax, data, name in zip(axes, [recall, precision], ["Recall", "Precision proxy"]):
-        image = ax.imshow(data, origin="lower", vmin=0, vmax=1, cmap="viridis", aspect="auto")
+        image = ax.imshow(
+            data, origin="lower", vmin=0, vmax=1, cmap="viridis", aspect="auto"
+        )
         draw_contours(ax, data, [0.25, 0.5, 0.75, 0.9])
         annotate_counts(ax, data, counts)
         ax.set_title(name)
-        ax.set_xticks(np.arange(len(SNR_BINS) - 1), labels_for_bins(SNR_BINS), rotation=35, ha="right")
-        ax.set_yticks(np.arange(len(parameter_bins) - 1), labels_for_bins(parameter_bins, parameter_labels))
-        ax.set_xlabel("Injected fluence S/N")
+        ax.set_xticks(
+            np.arange(len(FLUENCE_SNR_BINS) - 1),
+            labels_for_bins(FLUENCE_SNR_BINS),
+            rotation = 35,
+            ha       = "right",
+        )
+        ax.set_yticks(
+            np.arange(len(parameter_bins) - 1),
+            labels_for_bins(parameter_bins, parameter_labels),
+        )
+        ax.set_xlabel("Injected fluence S/N (matched-filter sigma)")
         ax.set_ylabel(parameter_label)
         ax.grid(color="white", alpha=0.18, linewidth=0.5)
         fig.colorbar(image, ax=ax, fraction=0.046, pad=0.03, label=name.lower())
@@ -273,14 +305,33 @@ def plot_loss_pair(
     precision_loss: np.ndarray,
 ) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(14.5, 5.2), constrained_layout=True)
-    vmax = max(0.05, float(np.nanmax(np.abs([recall_loss, precision_loss]))) if np.isfinite([recall_loss, precision_loss]).any() else 0.05)
-    for ax, data, name in zip(axes, [recall_loss, precision_loss], ["Recall loss raw8-packed2", "Precision proxy loss raw8-packed2"]):
-        image = ax.imshow(data, origin="lower", vmin=-vmax, vmax=vmax, cmap="coolwarm", aspect="auto")
+    vmax = max(
+        0.05,
+        float(np.nanmax(np.abs([recall_loss, precision_loss])))
+        if np.isfinite([recall_loss, precision_loss]).any()
+        else 0.05,
+    )
+    for ax, data, name in zip(
+        axes,
+        [recall_loss, precision_loss],
+        ["Recall loss raw8-packed2", "Precision proxy loss raw8-packed2"],
+    ):
+        image = ax.imshow(
+            data, origin="lower", vmin=-vmax, vmax=vmax, cmap="coolwarm", aspect="auto"
+        )
         draw_contours(ax, data, [-0.2, -0.1, 0, 0.1, 0.2])
         ax.set_title(name)
-        ax.set_xticks(np.arange(len(SNR_BINS) - 1), labels_for_bins(SNR_BINS), rotation=35, ha="right")
-        ax.set_yticks(np.arange(len(parameter_bins) - 1), labels_for_bins(parameter_bins, parameter_labels))
-        ax.set_xlabel("Injected fluence S/N")
+        ax.set_xticks(
+            np.arange(len(FLUENCE_SNR_BINS) - 1),
+            labels_for_bins(FLUENCE_SNR_BINS),
+            rotation = 35,
+            ha       = "right",
+        )
+        ax.set_yticks(
+            np.arange(len(parameter_bins) - 1),
+            labels_for_bins(parameter_bins, parameter_labels),
+        )
+        ax.set_xlabel("Injected fluence S/N (matched-filter sigma)")
         ax.set_ylabel(parameter_label)
         ax.grid(color="black", alpha=0.12, linewidth=0.5)
         fig.colorbar(image, ax=ax, fraction=0.046, pad=0.03, label="raw8 - packed2")
@@ -295,9 +346,13 @@ def summarize(matches: list[dict], false_positives: list[dict]) -> dict:
     out: dict[str, dict] = {}
     for quantization in QUANTIZATIONS:
         rows = [row for row in matches if row.get("quantization") == quantization]
-        fps = [row for row in false_positives if row.get("assigned_quantization") == quantization]
+        fps = [
+            row
+            for row in false_positives
+            if row.get("assigned_quantization") == quantization
+        ]
         detected = sum(1 for row in rows if parse_bool(row.get("detected")))
-        total = len(rows)
+        total    = len(rows)
         fp_count = len(fps)
         out[quantization] = {
             "truth_count": total,
@@ -305,18 +360,23 @@ def summarize(matches: list[dict], false_positives: list[dict]) -> dict:
             "false_positive_count": fp_count,
             "false_positive_unit": "deduplicated_detection_event",
             "recall": detected / total if total else 0.0,
-            "precision_proxy": detected / (detected + fp_count) if (detected + fp_count) else 0.0,
+            "precision_proxy": detected / (detected + fp_count)
+            if (detected + fp_count)
+            else 0.0,
         }
     if out["raw8"]["truth_count"] and out["packed2"]["truth_count"]:
         out["packed2_minus_raw8"] = {
             "recall_delta": out["packed2"]["recall"] - out["raw8"]["recall"],
-            "precision_proxy_delta": out["packed2"]["precision_proxy"] - out["raw8"]["precision_proxy"],
+            "precision_proxy_delta": out["packed2"]["precision_proxy"]
+            - out["raw8"]["precision_proxy"],
         }
     return out
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Aggregate injection campaign analysis outputs.")
+    parser = argparse.ArgumentParser(
+        description="Aggregate injection campaign analysis outputs."
+    )
     parser.add_argument("--analysis-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
@@ -324,7 +384,11 @@ def main() -> None:
     matches, false_positives = load_campaign_tables(args.analysis_root)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     if matches:
-        write_csv(args.output_dir / "all_matches.csv", matches, sorted({key for row in matches for key in row}))
+        write_csv(
+            args.output_dir / "all_matches.csv",
+            matches,
+            sorted({key for row in matches for key in row}),
+        )
     if false_positives:
         write_csv(
             args.output_dir / "all_false_positives.csv",
@@ -343,15 +407,17 @@ def main() -> None:
 
     cell_rows = []
     for parameter, spec in specs.items():
-        bins = spec["bins"]
-        labels = spec.get("labels")
+        bins      = spec["bins"]
+        labels    = spec.get("labels")
         per_quant = {}
         for quantization in QUANTIZATIONS:
-            recall, precision, counts, fp = cell_tables(matches, false_positives, parameter, bins, quantization)
+            recall, precision, counts, fp = cell_tables(
+                matches, false_positives, parameter, bins, quantization
+            )
             per_quant[quantization] = (recall, precision, counts, fp)
             plot_metric_pair(
-                args.output_dir / f"snr_vs_{parameter}_{quantization}.png",
-                f"{quantization}: S/N vs {spec['label']}",
+                args.output_dir / f"fluence_snr_vs_{parameter}_{quantization}.png",
+                f"{quantization}: fluence S/N vs {spec['label']}",
                 spec["label"],
                 bins,
                 labels,
@@ -360,26 +426,36 @@ def main() -> None:
                 counts,
             )
             for y, (lo, hi) in enumerate(zip(bins[:-1], bins[1:])):
-                for x, (snr_lo, snr_hi) in enumerate(zip(SNR_BINS[:-1], SNR_BINS[1:])):
-                    cell_rows.append({
-                        "quantization": quantization,
-                        "parameter": parameter,
-                        "param_low": lo,
-                        "param_high": hi,
-                        "snr_low": snr_lo,
-                        "snr_high": snr_hi,
-                        "n_injected": int(counts[y, x]),
-                        "n_detected": int(round(np.nan_to_num(recall[y, x]) * counts[y, x])),
-                        "n_false_positive_assigned": int(fp[y, x]),
-                        "recall": "" if not np.isfinite(recall[y, x]) else float(recall[y, x]),
-                        "precision_proxy": "" if not np.isfinite(precision[y, x]) else float(precision[y, x]),
-                    })
+                for x, (snr_lo, snr_hi) in enumerate(
+                    zip(FLUENCE_SNR_BINS[:-1], FLUENCE_SNR_BINS[1:])
+                ):
+                    cell_rows.append(
+                        {
+                            "quantization": quantization,
+                            "parameter": parameter,
+                            "param_low": lo,
+                            "param_high": hi,
+                            "fluence_snr_low": snr_lo,
+                            "fluence_snr_high": snr_hi,
+                            "n_injected": int(counts[y, x]),
+                            "n_detected": int(
+                                round(np.nan_to_num(recall[y, x]) * counts[y, x])
+                            ),
+                            "n_false_positive_assigned": int(fp[y, x]),
+                            "recall": ""
+                            if not np.isfinite(recall[y, x])
+                            else float(recall[y, x]),
+                            "precision_proxy": ""
+                            if not np.isfinite(precision[y, x])
+                            else float(precision[y, x]),
+                        }
+                    )
 
-        raw_recall, raw_precision, _, _ = per_quant["raw8"]
+        raw_recall, raw_precision, _, _       = per_quant["raw8"]
         packed_recall, packed_precision, _, _ = per_quant["packed2"]
         plot_loss_pair(
-            args.output_dir / f"snr_vs_{parameter}_raw8_minus_packed2.png",
-            f"2-bit quantization loss: S/N vs {spec['label']}",
+            args.output_dir / f"fluence_snr_vs_{parameter}_raw8_minus_packed2.png",
+            f"2-bit quantization loss: fluence S/N vs {spec['label']}",
             spec["label"],
             bins,
             labels,
@@ -395,8 +471,8 @@ def main() -> None:
             "parameter",
             "param_low",
             "param_high",
-            "snr_low",
-            "snr_high",
+            "fluence_snr_low",
+            "fluence_snr_high",
             "n_injected",
             "n_detected",
             "n_false_positive_assigned",
@@ -409,3 +485,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# fmt: on
