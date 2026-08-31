@@ -269,6 +269,9 @@ CenterNet 的浮点中心坐标会保留到 DM/TOA 换算；binary cutout 按
 每批只分配一份 CuPy 缓冲，cutout kernel 直接写入各行，再以一次 DLPack 零拷贝交给
 PyTorch；full/low/high 中起始采样和逐细通道整数时移完全相同的候选会共用同一份 cutout。
 RFI 统计量和有效通道计数也留在 GPU 上，不在每个搜索块触发 CPU 同步。
+RFI 统计的时间分辨率固定为 393.216 us（49.152 us 数据每 8 点、98.304 us
+数据每 4 点），不随 detector/消色散使用的 `time_factor` 改变；频率仍统一统计为
+512 个 coarse channels。
 
 频率输入不写死为 4096 通道：`NCHAN` 可以是 512 的任意正整数倍（常见的 1024、
 2048、4096、8192 都可），GPU 消色散后统一平均到 512 通道。`OBSBW < 0` 的 FITS

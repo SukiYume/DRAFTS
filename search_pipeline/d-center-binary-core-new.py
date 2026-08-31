@@ -15,19 +15,19 @@ CenterNet 的亚像素中心坐标会一直保留到 DM 和 TOA 换算，避免�
 
 binary 分类器使用 :mod:`binary_model.build_binary_model`（与训练侧 ``binary_classification/`` 同步）。
 
-性能优化点：
+性能设计：
   1. FITS 缓存保存 uint16 偏振和，主机内存与 H2D 流量仅为 float32 的一半
   2. tiled transpose kernel 在 GPU 上直接生成 (freq, time) 布局
   3. 相邻 32 个 DM 同块计算，利用其相近时移复用只读缓存数据
   4. 原位时间前缀和让每个输出只需两次读取即可完成时间平均
-  5. shift_base 与原始数据缓冲常驻显存，候选切片不再重复 CPU→GPU
+  5. shift_base 与原始数据缓冲常驻显存，候选切片直接读取显存
   6. binary cutout 用单个 kernel 融合细通道消色散、时间平均和频率平均
   7. CuPy ↔ PyTorch 零拷贝桥接；归一化使用 ``torch.kthvalue``
   8. 用已上传 GPU 的当前搜索块生成轻量 512-channel RFI 掩码；每个坏 coarse
      channel 对应的一组细通道不参与 DM-time 求和
 
-已验证的实时部署是单张 NVIDIA L40 运行单个 worker；完整 4096-DM 配置连同两套模型
-约占 11.6 GiB，不能直接沿用旧 PBS 示例的一卡四 worker 设置。
+单张 NVIDIA L40 运行一个 worker 时，完整 4096-DM 配置连同两套模型约占
+11.6 GiB；每张卡的 worker 数量必须按可用显存设置。
 """
 
 import json
@@ -78,14 +78,17 @@ class ProcessConfig:
     class_block_size: int      = 512
     class_threshold: float     = 0.5
     classifier_batch_size: int = 64
-    # 同时作为 FITS 读取线程数和未来文件预读深度；1 等价于旧串行读取节奏。
+
+    # 同时控制 FITS 读取线程数和后续文件的预读深度；设为 1 时串行读取。
     fits_prefetch_workers: int   = 2
+
     rfi_filter: bool             = True
     rfi_level_ratio: float       = 0.05
     rfi_cv_ratio: float          = 3.0
     rfi_zero_dm_filter: bool     = True
     rfi_zero_dm_sigma: float     = 8.0
     rfi_zero_dm_occupancy: float = 0.03
+
     save_npy: bool               = True
     save_plot: bool              = True
     save_manifest: bool          = True
@@ -93,8 +96,11 @@ class ProcessConfig:
     verbose: bool                = False
 
 
-# Detector 输入的 DM 轴固定为 512 像素；保持现有模型使用的每像素 2 个 trial。
+# Detector 输入的 DM 轴为 512 像素，每个像素平均 2 个 DM trial。
 DM_TRIALS_PER_CHUNK = 1024
+# 搜索时间分辨率为 49.152 us * time_factor；RFI 统计固定为 393.216 us。
+SEARCH_TIME_UNIT_US    = 49.152
+RFI_TIME_RESOLUTION_US = 393.216
 
 
 @dataclass
@@ -105,26 +111,26 @@ class DedispersionCache:
     data_width 是原始时间采样长度，包含色散延迟所需的读取提前量。
     """
 
-    split_pos: int  # 保持旧 512-channel core 的低/高频分割位置
-    shift_base_gpu: cp.ndarray  # (dm_trials, freq_reso)        int32
-    shift_unit_raw_cpu: np.ndarray  # (freq_reso,) 精确 cutout 复用键 float32
-    shift_unit_raw_gpu: cp.ndarray  # (freq_reso,) 每 pc cm^-3 的原始采样时移 float32
-    dm_time_gpu: cp.ndarray  # (3, dm_trials, dm_time_width) float32
-    raw_data_gpu: cp.ndarray  # (data_width, freq_reso)      uint16（前两个偏振之和）
-    data_cumsum_gpu: cp.ndarray  # (freq_reso, data_width)      float32（原位前缀和）
-    dm_time_width: int  # 输出时间维（block_file 长度）
-    data_width: int  # 输入时间维（comb_file 长度，含色散提前量）
+    split_pos: int                       # 低频和高频输出的细通道分界
+    shift_base_gpu: cp.ndarray           # (dm_trials, freq_reso) int32
+    shift_unit_raw_cpu: np.ndarray       # (freq_reso,) float32，精确 cutout 复用键
+    shift_unit_raw_gpu: cp.ndarray       # (freq_reso,) float32，每 DM 的原始采样时移
+    dm_time_gpu: cp.ndarray              # (3, dm_trials, dm_time_width) float32
+    raw_data_gpu: cp.ndarray             # (data_width, freq_reso) uint16
+    data_cumsum_gpu: cp.ndarray          # (freq_reso, data_width) float32
+    dm_time_width: int                   # block 输出的降采样时间长度
+    data_width: int                      # 含色散读取余量的原始时间长度
 
 
 # ---------------------------------------------------------------------------
 # 2. CuPy RawKernel：转置/归一化、消色散、binary cutout
 # ---------------------------------------------------------------------------
 #
-# 当前 kernel 布局（参数调整必须重新基准）：
+# kernel 布局（参数调整必须重新基准）：
 #   1. data 转置成 (freq, time) → 同 warp 内 shift 连续 → 完美合并访问
 #   2. block 维度 (BLOCK_TIME, BLOCK_DM) = (32, 32)，一个 warp 对应一个 DM
 #   3. 同块相邻 DM 的 shift 只差少量样本，前缀数据可由 L1/L2 大量复用
-#   4. shift_base 走只读缓存；省去 shared-memory 搬运、同步和 DM 数限制
+#   4. shift_base 使用只读缓存，不占用 shared memory
 #   5. split_pos 切两段循环，消除 hot loop 内分支
 #   6. __ldg / __restrict__ 编译器提示
 # ---------------------------------------------------------------------------
@@ -140,7 +146,7 @@ void prepare_data(const unsigned short* __restrict__ raw_data,
                   const unsigned char* __restrict__ rfi_bad_time,
                   float* __restrict__ data_out,
                   int time_size, int freq_size,
-                  int down_time_rate, int down_freq_rate) {
+                  int rfi_down_time_rate, int down_freq_rate) {
     __shared__ float tile[TILE][TILE + 1];
 
     int f_in = blockIdx.x * TILE + threadIdx.x;
@@ -152,7 +158,7 @@ void prepare_data(const unsigned short* __restrict__ raw_data,
         if (f_in < freq_size && t < time_size) {
             float denom = coarse_mean[f_in / down_freq_rate] + 1.0e-8f;
             tile[j][threadIdx.x] = rfi_bad_coarse[f_in / down_freq_rate]
-                ? 0.0f : (rfi_bad_time[t / down_time_rate]
+                ? 0.0f : (rfi_bad_time[t / rfi_down_time_rate]
                     ? 1.0f : (float)raw_data[
                         (size_t)t * (size_t)freq_size + (size_t)f_in
                     ] / denom);
@@ -281,7 +287,7 @@ extern "C" __global__
 void make_coarse_time(const unsigned short* __restrict__ raw_data,
                       float* __restrict__ coarse_time,
                       int output_time_size, int freq_size,
-                      int down_time_rate, int down_freq_rate) {
+                      int rfi_down_time_rate, int down_freq_rate) {
     int coarse_freq_size = freq_size / down_freq_rate;
     int pos = blockIdx.x * blockDim.x + threadIdx.x;
     int total = output_time_size * coarse_freq_size;
@@ -289,17 +295,17 @@ void make_coarse_time(const unsigned short* __restrict__ raw_data,
 
     int y = pos / coarse_freq_size;
     int coarse_f = pos - y * coarse_freq_size;
-    int t0 = y * down_time_rate;
+    int t0 = y * rfi_down_time_rate;
     int f0 = coarse_f * down_freq_rate;
     float value = 0.0f;
-    for (int dt = 0; dt < down_time_rate; dt++) {
+    for (int dt = 0; dt < rfi_down_time_rate; dt++) {
         const unsigned short* row = raw_data
             + (size_t)(t0 + dt) * (size_t)freq_size + (size_t)f0;
         for (int df = 0; df < down_freq_rate; df++) {
             value += (float)row[df];
         }
     }
-    coarse_time[pos] = value / (float)(down_time_rate * down_freq_rate);
+    coarse_time[pos] = value / (float)(rfi_down_time_rate * down_freq_rate);
 }
 """,
     "make_coarse_time",
@@ -340,9 +346,9 @@ def load_2bit_fits_file(file_name):
 
 def get_obparams(file_name, time_factor=8.0):
     """读 fits 头并写入模块级全局变量（freq, freq_reso, time_reso, file_leng,
-    down_freq_rate, down_time_rate, nbits）。"""
-    global freq, freq_reso, time_reso, file_leng, down_freq_rate, down_time_rate, nbits
-    global reverse_freq
+    down_freq_rate, down_time_rate, rfi_down_time_rate, nbits）。"""
+    global freq, freq_reso, time_reso, file_leng, down_freq_rate, down_time_rate
+    global rfi_down_time_rate, nbits, reverse_freq
     with fits.open(file_name) as f:
         time_reso = f[1].header["TBIN"]
         freq_reso = f[1].header["NCHAN"]
@@ -359,22 +365,26 @@ def get_obparams(file_name, time_factor=8.0):
     if not np.isfinite(obs_bw_abs) or obs_bw_abs == 0.0:
         raise ValueError(f"OBSBW={obs_bw!r} 必须是有限非零数值")
     reverse_freq = obs_bw < 0
-    freq         = (
-        obs_freq
-        - obs_bw_abs / 2
-        + np.arange(freq_reso, dtype=np.float32) * obs_bw_abs / freq_reso
+    freq = obs_freq - obs_bw_abs / 2 + (
+        np.arange(freq_reso, dtype=np.float32) * obs_bw_abs / freq_reso
     )
-    # 这里不是 FITS 读取阶段的预下采样率，而是细通道完成时移对齐后，在 GPU 上
-    # 聚合到 512 个 coarse channels 的频率 bin 宽度。
+    # 每个输出 coarse channel 聚合的原始细通道数；FITS 读取保持原始频率分辨率。
     down_freq_rate = freq_reso // 512
-    time_ratio     = (49.152 * time_factor / 1e6) / time_reso
+    time_ratio     = (SEARCH_TIME_UNIT_US * time_factor / 1e6) / time_reso
     down_time_rate = int(round(time_ratio))
-    if down_time_rate < 1 or not np.isclose(
-        time_ratio, down_time_rate, rtol=0.0, atol=1e-6
+    if down_time_rate < 1 or not np.isclose(time_ratio, down_time_rate, rtol=0.0, atol=1e-6):
+        raise ValueError(
+            f"目标时间分辨率 {SEARCH_TIME_UNIT_US:g} us * time_factor={time_factor:g} 必须是 "
+            f"TBIN={time_reso:g} s 的正整数倍；当前比值为 {time_ratio:g}"
+        )
+    rfi_time_ratio     = (RFI_TIME_RESOLUTION_US / 1e6) / time_reso
+    rfi_down_time_rate = int(round(rfi_time_ratio))
+    if rfi_down_time_rate < 1 or not np.isclose(
+        rfi_time_ratio, rfi_down_time_rate, rtol=0.0, atol=1e-6
     ):
         raise ValueError(
-            f"目标时间分辨率 49.152 us * time_factor={time_factor:g} 必须是 "
-            f"TBIN={time_reso:g} s 的正整数倍；当前比值为 {time_ratio:g}"
+            f"RFI 固定时间分辨率 {RFI_TIME_RESOLUTION_US:g} us 必须是 "
+            f"TBIN={time_reso:g} s 的正整数倍；当前比值为 {rfi_time_ratio:g}"
         )
 
 
@@ -412,39 +422,36 @@ def _dm_grid_geometry(process_config):
     )
 
 
-def _dispersion_file_margins(process_config):
+def _dispersion_file_margins(dm_first_trial, dm_last_trial):
     """返回负、正 DM 分别需要向前/向后补读的 FITS 文件数。
 
     最低频相对最高频的最大正/负延迟（时间降采样前的样本数）换算成文件数。
-    trial 位于半开区间 ``[dm_min, dm_min + dm_range)``。
     依赖 :func:`get_obparams` 已设置的全局量 ``freq`` / ``time_reso`` / ``file_leng``。
     """
-    _, dm_first_trial, dm_last_trial = _dm_grid_geometry(process_config)
     samples_per_dm = 4.15 * (freq.min() ** -2 - freq.max() ** -2) * 1e3 / time_reso
     pre_samples    = int(max(0.0, -dm_first_trial) * samples_per_dm)
     post_samples   = int(max(0.0, dm_last_trial) * samples_per_dm)
-    return (
-        int(np.ceil(pre_samples / file_leng)),
-        int(np.ceil(post_samples / file_leng)),
-    )
+    return int(np.ceil(pre_samples / file_leng)), int(np.ceil(post_samples / file_leng))
 
 
 def compute_dispersion_margins(fits_file, process_config):
     """读取观测参数后返回 ``(前向文件数, 后向文件数)``。"""
     get_obparams(fits_file, process_config.time_factor)
-    return _dispersion_file_margins(process_config)
+    _, dm_first_trial, dm_last_trial = _dm_grid_geometry(process_config)
+    return _dispersion_file_margins(dm_first_trial, dm_last_trial)
 
 
 def _validate_config(process_config, block_size, down_file_leng):
     """集中校验所有整除 / 配置约束，未通过则一次性列出全部错误并 raise。
 
     依赖 :func:`get_obparams` 已设置的全局量 ``file_leng`` / ``down_time_rate`` /
-    ``freq_reso`` / ``down_freq_rate``。
+    ``rfi_down_time_rate`` / ``freq_reso`` / ``down_freq_rate``。
     """
-    errors    = []
-    dm_trials = 0
+    errors         = []
+    dm_trials      = 0
+    dm_first_trial = dm_last_trial = 0.0
     try:
-        dm_trials, _, _ = _dm_grid_geometry(process_config)
+        dm_trials, dm_first_trial, dm_last_trial = _dm_grid_geometry(process_config)
     except ValueError as exc:
         errors.append(str(exc))
 
@@ -469,6 +476,11 @@ def _validate_config(process_config, block_size, down_file_leng):
     if file_leng % down_time_rate != 0:
         errors.append(
             f"file_leng {file_leng} 必须能被 down_time_rate {down_time_rate} 整除"
+        )
+    if process_config.rfi_filter and file_leng % rfi_down_time_rate != 0:
+        errors.append(
+            f"file_leng {file_leng} 必须能被固定 RFI 下采样率 "
+            f"rfi_down_time_rate {rfi_down_time_rate} 整除"
         )
     if freq_reso // down_freq_rate != 512:
         errors.append(
@@ -521,7 +533,7 @@ def _validate_config(process_config, block_size, down_file_leng):
         raise ValueError(
             "process_fits_list 参数自检失败:\n  - " + "\n  - ".join(errors)
         )
-    return dm_trials, dm_trials // DM_TRIALS_PER_CHUNK
+    return dm_trials, dm_trials // DM_TRIALS_PER_CHUNK, dm_first_trial, dm_last_trial
 
 
 # ---------------------------------------------------------------------------
@@ -544,16 +556,12 @@ def _build_dedispersion_cache(
     freq_inv2     = np.float32(1.0) / (freq_float32 * freq_float32)
     freq_max_inv2 = float(freq_inv2[-1])
 
-    # 全部细通道都进入 cache；不再需要旧版的有效通道索引映射。
-    # 当前数据块要排除的通道/零 DM 时间 bin 全部由 _find_rfi_masks_gpu 动态决定。
+    # cache 覆盖全部细通道；动态 RFI mask 在每个输入窗口上单独计算。
     # FS1 / FS2 严格按原始频带中点二分；4096-channel、1000--1500 MHz 数据即
     # FS1=[1000, 1250) MHz，FS2=[1250, 1500) MHz。
     split_pos = freq_reso // 2 - 1
 
-    dm_values = (
-        np.arange(height, dtype=np.float32) * process_config.dm_step
-        + process_config.dm_min
-    )
+    dm_values = np.arange(height, dtype=np.float32) * process_config.dm_step + process_config.dm_min
     delta_inv2 = (freq_inv2 - freq_max_inv2).astype(np.float32)
     # shift 必须保留原始采样精度；时间平均在 GPU kernel 内、完成频率对齐之后执行。
     factor         = np.float32(4.15e3 / time_reso)
@@ -574,79 +582,78 @@ def _build_dedispersion_cache(
     )
 
 
-def _find_rfi_masks_gpu(raw_data_gpu, process_config):
-    """找出不应参与 DM-time 求和的 coarse channels 和零 DM 时间 bin。
+def _prepare_rfi_gpu(raw_data_gpu, process_config):
+    """生成带通归一化均值、坏 coarse-channel mask 和零 DM 时间 mask。
 
-    数据已经在 GPU；融合 kernel 直接生成目标时间/频率分辨率的轻量统计矩阵。
+    数据已经在 GPU；融合 kernel 直接生成固定 393.216 us 时间分辨率、512-channel
+    频率分辨率的轻量统计矩阵。RFI 时间分辨率不依赖搜索 ``time_factor``。
     每个 coarse channel 用两项统计量判定：
 
     * 平均电平低于有效频段中位数的 ``rfi_level_ratio``：带边/坏通道；
     * 时间变异系数高于有效通道中位数的 ``rfi_cv_ratio``：脉冲型 RFI。
 
     频率 mask 长度固定为 512，被判坏的一项对应 ``down_freq_rate`` 个原始细通道。时间 mask 在
-    ``time/down_time_rate`` 分辨率上，用频率归一化后的全频平均显著性与通道
-    占用率联合判定，并向两侧各扩一个 bin。没有任何额外固定频段/时间掩码。
+    ``time/rfi_down_time_rate`` 分辨率上，用频率归一化后的全频平均显著性与通道
+    占用率联合判定，并向两侧各扩一个 bin。坏频率通道在 DM-time 输入中置零，
+    坏时间 bin 以归一化基线 1 替换；没有额外固定频段或固定时间掩码。
     """
-    analysis_time_size = int(raw_data_gpu.shape[0])
-    analysis_time_size -= analysis_time_size % down_time_rate
-    coarse_count     = freq_reso // down_freq_rate
-    output_time_size = analysis_time_size // down_time_rate
-    bad_mask_gpu     = cp.zeros(coarse_count, dtype=cp.bool_)
-    bad_time_gpu     = cp.zeros(output_time_size, dtype=cp.bool_)
-    if not process_config.rfi_filter or analysis_time_size == 0:
-        return bad_mask_gpu, bad_time_gpu, None
+    input_time           = int(raw_data_gpu.shape[0])
+    coarse_channel_count = freq_reso // down_freq_rate
+    rfi_time_bins        = (input_time + rfi_down_time_rate - 1) // rfi_down_time_rate
 
-    coarse_time_gpu = cp.empty((output_time_size, coarse_count), dtype=cp.float32)
-    total           = output_time_size * coarse_count
+    if not process_config.rfi_filter:
+        coarse_mean_gpu = cp.mean(
+            raw_data_gpu.reshape(input_time, coarse_channel_count, down_freq_rate),
+            axis  = (0, 2),
+            dtype = cp.float32,
+        )
+        return (
+            coarse_mean_gpu,
+            cp.zeros(coarse_channel_count, dtype=cp.bool_),
+            cp.zeros(rfi_time_bins, dtype=cp.bool_),
+        )
+
+    coarse_time_gpu = cp.empty((rfi_time_bins, coarse_channel_count), dtype=cp.float32)
+    total = rfi_time_bins * coarse_channel_count
     _COARSE_TIME_KERNEL(
         ((total + 255) // 256,),
         (256,),
         (
             raw_data_gpu,
             coarse_time_gpu,
-            output_time_size,
+            rfi_time_bins,
             freq_reso,
-            down_time_rate,
+            rfi_down_time_rate,
             down_freq_rate,
         ),
     )
-    channel_mean_gpu = coarse_time_gpu.mean(axis=0, dtype=cp.float32)
-    channel_cv_gpu   = coarse_time_gpu.std(axis=0, dtype=cp.float32) / (
-        channel_mean_gpu + np.float32(1.0e-6)
+    coarse_mean_gpu = coarse_time_gpu.mean(axis=0, dtype=cp.float32)
+    coarse_cv_gpu   = coarse_time_gpu.std(axis=0, dtype=cp.float32) / (
+        coarse_mean_gpu + np.float32(1.0e-6)
     )
-    reference_mean = cp.maximum(cp.median(channel_mean_gpu), np.float32(1.0e-6))
-    cv_limit       = cp.maximum(
-        cp.median(channel_cv_gpu) * np.float32(process_config.rfi_cv_ratio),
+    median_level_gpu = cp.maximum(cp.median(coarse_mean_gpu), np.float32(1.0e-6))
+    cv_limit_gpu      = cp.maximum(
+        cp.median(coarse_cv_gpu) * np.float32(process_config.rfi_cv_ratio),
         np.float32(1.0e-3),
     )
-    bad_mask_gpu[:] = (
-        channel_mean_gpu < reference_mean * np.float32(process_config.rfi_level_ratio)
-    ) | (channel_cv_gpu > cv_limit)
+    bad_channel_mask_gpu = (
+        coarse_mean_gpu < median_level_gpu * np.float32(process_config.rfi_level_ratio)
+    ) | (coarse_cv_gpu > cv_limit_gpu)
+    bad_time_mask_gpu = cp.zeros(rfi_time_bins, dtype=cp.bool_)
 
     if process_config.rfi_zero_dm_filter:
-        good_mask_gpu       = ~bad_mask_gpu
-        good_count_gpu      = cp.count_nonzero(good_mask_gpu).astype(cp.float32)
-        safe_good_count_gpu = cp.maximum(good_count_gpu, np.float32(1.0))
-        coarse_time_gpu /= channel_mean_gpu[None, :] + np.float32(1.0e-6)
-        coarse_time_gpu[:, bad_mask_gpu] = np.float32(0.0)
-        zero_dm_gpu = (
-            coarse_time_gpu.sum(
-                axis  = 1,
-                dtype = cp.float32,
-            )
-            / safe_good_count_gpu
-        )
-        reference_cv = cp.nanmedian(
-            cp.where(good_mask_gpu, channel_cv_gpu, cp.nan),
-        )
-        reference_cv  = cp.nan_to_num(reference_cv, nan=0.0, copy=False)
-        occupancy_gpu = (
-            cp.count_nonzero(
-                coarse_time_gpu > np.float32(1.0) + np.float32(3.0) * reference_cv,
-                axis=1,
-            )
-            / safe_good_count_gpu
-        )
+        good_channel_mask_gpu   = ~bad_channel_mask_gpu
+        good_channel_count_gpu  = cp.count_nonzero(good_channel_mask_gpu).astype(cp.float32)
+        normalization_count_gpu = cp.maximum(good_channel_count_gpu, np.float32(1.0))
+        coarse_time_gpu /= coarse_mean_gpu[None, :] + np.float32(1.0e-6)
+        coarse_time_gpu[:, bad_channel_mask_gpu] = np.float32(0.0)
+        zero_dm_gpu = coarse_time_gpu.sum(axis=1, dtype=cp.float32) / normalization_count_gpu
+        reference_cv_gpu = cp.nanmedian(cp.where(good_channel_mask_gpu, coarse_cv_gpu, cp.nan))
+        reference_cv_gpu = cp.nan_to_num(reference_cv_gpu, nan=0.0, copy=False)
+        occupancy_gpu = cp.count_nonzero(
+            coarse_time_gpu > np.float32(1.0) + np.float32(3.0) * reference_cv_gpu,
+            axis=1,
+        ) / normalization_count_gpu
         zero_dm_center = cp.median(zero_dm_gpu)
         zero_dm_sigma  = cp.maximum(
             np.float32(1.4826) * cp.median(cp.abs(zero_dm_gpu - zero_dm_center)),
@@ -659,13 +666,23 @@ def _find_rfi_masks_gpu(raw_data_gpu, process_config):
                 + np.float32(process_config.rfi_zero_dm_sigma) * zero_dm_sigma
             )
             & (occupancy_gpu >= np.float32(process_config.rfi_zero_dm_occupancy))
-            & (good_count_gpu > 0)
+            & (good_channel_count_gpu > 0)
         )
-        bad_time_gpu = raw_bad_time_gpu.copy()
-        bad_time_gpu[1:] |= raw_bad_time_gpu[:-1]
-        bad_time_gpu[:-1] |= raw_bad_time_gpu[1:]
+        bad_time_mask_gpu = raw_bad_time_gpu.copy()
+        bad_time_mask_gpu[1:] |= raw_bad_time_gpu[:-1]
+        bad_time_mask_gpu[:-1] |= raw_bad_time_gpu[1:]
 
-    return bad_mask_gpu, bad_time_gpu, channel_mean_gpu
+    if process_config.verbose:
+        bad_channel_count = int(cp.count_nonzero(bad_channel_mask_gpu).get())
+        bad_time_count    = int(cp.count_nonzero(bad_time_mask_gpu).get())
+        rfi_bin_us        = time_reso * rfi_down_time_rate * 1e6
+        print(
+            f"[RFI] masked {bad_channel_count}/{coarse_channel_count} coarse channels, "
+            f"{bad_time_count}/{bad_time_mask_gpu.size} zero-DM bins "
+            f"({bad_time_count * rfi_bin_us / 1e3:.3f} ms; {rfi_bin_us:.3f} us/bin)"
+        )
+
+    return coarse_mean_gpu, bad_channel_mask_gpu, bad_time_mask_gpu
 
 
 def d_dm_time_g(data, dd_cache, process_config):
@@ -691,87 +708,38 @@ def d_dm_time_g(data, dd_cache, process_config):
     offset = 0
     for part in data_parts:
         stop = offset + part.shape[0]
-        dd_cache.raw_data_gpu[offset:stop].set(
-            np.ascontiguousarray(part, dtype=np.uint16)
-        )
+        dd_cache.raw_data_gpu[offset:stop].set(np.ascontiguousarray(part, dtype=np.uint16))
         offset = stop
 
-    # cache 覆盖全部细通道；当前读取窗口要排除的频率完全由动态 RFI mask 决定。
-    # RFI 判定使用包含色散读取提前量的完整窗口，避免未来文件中的 RFI 污染高 DM 输出。
-    rfi_bad_coarse_gpu, rfi_bad_time_gpu, coarse_mean_gpu = _find_rfi_masks_gpu(
-        dd_cache.raw_data_gpu,
-        process_config,
+    # RFI 统计覆盖完整输入窗口，包括负、正 DM 色散所需的读取余量。
+    coarse_mean_gpu, bad_channel_mask_gpu, bad_time_mask_gpu = _prepare_rfi_gpu(
+        dd_cache.raw_data_gpu, process_config
     )
 
-    # 分母仍按旧 core 的 512 个 coarse channel 计算，但不平均任何待消色散样本；
-    # tiled kernel 直接把细通道归一化并转成 (freq, time) 合并访问布局。
-    if coarse_mean_gpu is None:
-        coarse_mean_gpu = cp.mean(
-            dd_cache.raw_data_gpu.reshape(
-                input_time,
-                freq_reso // down_freq_rate,
-                down_freq_rate,
-            ),
-            axis  = (0, 2),
-            dtype = cp.float32,
-        )
+    # 每个细通道按所属 coarse channel 的全局均值归一化，动态 RFI mask 在转置时应用。
     _PREPARE_KERNEL(
         ((freq_reso + 31) // 32, (input_time + 31) // 32),
         (32, 8),
         (
             dd_cache.raw_data_gpu,
             coarse_mean_gpu,
-            rfi_bad_coarse_gpu,
-            rfi_bad_time_gpu,
+            bad_channel_mask_gpu,
+            bad_time_mask_gpu,
             dd_cache.data_cumsum_gpu,
             input_time,
             freq_reso,
-            down_time_rate,
+            rfi_down_time_rate,
             down_freq_rate,
         ),
     )
-    del coarse_mean_gpu
+    del coarse_mean_gpu, bad_channel_mask_gpu, bad_time_mask_gpu
 
-    # raw_data_gpu 保持完整，后续 binary cutout 不受 RFI mask 影响。
-    if process_config.rfi_filter and process_config.verbose:
-        bad_coarse = cp.asnumpy(cp.flatnonzero(rfi_bad_coarse_gpu))
-        ranges     = []
-        if bad_coarse.size:
-            start = previous = int(bad_coarse[0])
-            for coarse_index in bad_coarse[1:]:
-                coarse_index = int(coarse_index)
-                if coarse_index != previous + 1:
-                    ranges.append((start, previous))
-                    start = coarse_index
-                previous = coarse_index
-            ranges.append((start, previous))
-        labels = [
-            (
-                f"{freq[start * down_freq_rate]:.2f}-"
-                f"{freq[min((stop + 1) * down_freq_rate - 1, freq_reso - 1)]:.2f} MHz"
-            )
-            for start, stop in ranges
-        ]
-        print(
-            f"[RFI] dynamic mask {bad_coarse.size}/"
-            f"{freq_reso // down_freq_rate} coarse channels: "
-            f"{', '.join(labels) if labels else 'none'}"
-        )
-        bad_time_count = int(cp.count_nonzero(rfi_bad_time_gpu).get())
-        print(
-            f"[RFI] zero-DM time mask {bad_time_count}/{rfi_bad_time_gpu.size} bins "
-            f"({bad_time_count * time_reso * down_time_rate * 1e3:.3f} ms)"
-        )
-
-    # 原位前缀和避免再分配一份约 6 GB 的细通道数据。
+    # raw_data_gpu 保留未掩码的数据供 binary cutout 使用；消色散使用原位时间前缀和。
     cp.cumsum(dd_cache.data_cumsum_gpu, axis=1, out=dd_cache.data_cumsum_gpu)
 
     BLOCK_TIME, BLOCK_DM = 32, 32
     nthreads = (BLOCK_TIME, BLOCK_DM)
-    nblocks  = (
-        (dm_time_width + BLOCK_TIME - 1) // BLOCK_TIME,
-        (height + BLOCK_DM - 1) // BLOCK_DM,
-    )
+    nblocks  = ((dm_time_width + BLOCK_TIME - 1) // BLOCK_TIME, (height + BLOCK_DM - 1) // BLOCK_DM)
     _DE_DISP_KERNEL(
         nblocks,
         nthreads,
@@ -833,9 +801,7 @@ def preprocess_data_gpu(data: torch.Tensor, exp_cut: float = 5.0) -> torch.Tenso
     return data.sub_(data_min).div_(data_max - data_min + 1e-8)
 
 
-def _dedisperse_cutout_postdown_gpu(
-    dd_cache, dm_value, toa_samp, output, input_origin_raw=0
-):
+def _dedisperse_cutout_postdown_gpu(dd_cache, dm_value, toa_samp, output, input_origin_raw=0):
     """把消色散和下采样结果直接写入预分配的 CuPy binary batch 行。"""
     block_size     = int(output.shape[0])
     expected_shape = (block_size, freq_reso // down_freq_rate)
@@ -851,9 +817,7 @@ def _dedisperse_cutout_postdown_gpu(
         )
     start_down = max(0, int(toa_samp) - block_size // 2)
     start_raw  = input_origin_raw + start_down * down_time_rate
-    shifts_gpu = cp.trunc(
-        float(dm_value) * dd_cache.shift_unit_raw_gpu,
-    ).astype(cp.int32)
+    shifts_gpu = cp.trunc(float(dm_value) * dd_cache.shift_unit_raw_gpu).astype(cp.int32)
     total = output.size
     _CUTOUT_KERNEL(
         ((total + 255) // 256,),
@@ -871,11 +835,10 @@ def _dedisperse_cutout_postdown_gpu(
             np.float32(1.0 if nbits == 2 else 0.5),
         ),
     )
-    return output
 
 
 # ---------------------------------------------------------------------------
-# 6. （检测解码已移出本文件；由 caller 把 decode_fn 传给 process_fits_list）
+# 6. 检测解码接口
 # ---------------------------------------------------------------------------
 # 期望 decode_fn 签名 :
 #     decode_fn(raw_pred, conf_thr=...) -> list[(scores_np, centers_xy_np)]
@@ -917,8 +880,7 @@ def _save_plot(img_display, new_burst, out_path, d, block_size, process_config):
     plt.yticks(np.linspace(0, 512, 5), [f"{value:g}" for value in dm_ticks])
     plt.xlabel(f"Time ({'s' if detector_time_seconds else 'ms'})")
     plt.ylabel("DM (pc cm-3)")
-    dm_extent     = process_config.dm_range
-    num_dm_chunks = int(round(dm_extent / dm_span))
+    num_dm_chunks = int(round(process_config.dm_range / dm_span))
     plt.title(
         f"DM chunk {d + 1}/{num_dm_chunks}: {dm_chunk_start:g}-{dm_chunk_stop:g}",
         fontsize=10,
@@ -994,31 +956,26 @@ def process_fits_list(
     manifest_path = os.path.join(save_path, process_config.manifest_name)
     get_obparams(fits_list[0], process_config.time_factor)
 
-    required_prefix_files, dds_file = _dispersion_file_margins(process_config)
     read_prefix_files = int((task_info or {}).get("read_prefix_files", 0))
     if read_prefix_files < 0 or read_prefix_files >= len(fits_list):
         raise ValueError(f"read_prefix_files={read_prefix_files} 与输入文件数不兼容")
 
-    input_file_count = len(fits_list)
-    input_start_mjd  = get_fits_start_mjd(fits_list[read_prefix_files])
+    input_start_mjd = get_fits_start_mjd(fits_list[read_prefix_files])
 
-    block_file = int(
-        np.ceil(down_time_rate * block_size / file_leng)
-    )  # 一个 block 对应的 fits 数
+    block_file = int(np.ceil(down_time_rate * block_size / file_leng))
+    down_file_leng = block_file * file_leng // down_time_rate
+
+    # 校验配置并把物理 DM 区间换算成 trial 几何和读取余量。
+    dm_trials, num_dm_chunks, dm_first_trial, dm_last_trial = _validate_config(
+        process_config, block_size, down_file_leng
+    )
+    required_prefix_files, dds_file = _dispersion_file_margins(dm_first_trial, dm_last_trial)
     comb_file        = required_prefix_files + block_file + dds_file  # 前余量 + block + 后余量
     input_origin_raw = required_prefix_files * file_leng
     if process_config.verbose:
         print(block_file, comb_file)
 
-    down_file_leng = block_file * file_leng // down_time_rate  # 输出 dm_time 的时间长度
-    comb_file_leng = comb_file * file_leng                     # 原始输入时间长度（含色散提前量）
-
-    # 集中参数自检，并把物理 DM 配置换算成内部 trial 几何。
-    dm_trials, num_dm_chunks = _validate_config(
-        process_config,
-        block_size,
-        down_file_leng,
-    )
+    comb_file_leng = comb_file * file_leng  # 原始输入时间长度（含色散读取余量）
 
     dd_cache = _build_dedispersion_cache(
         dm_trials,
@@ -1031,11 +988,8 @@ def process_fits_list(
     # 检测图几何：[dm_min, dm_min + dm_range) 每 1024 个 trial 切一块，再平均到 512 行。
     dm_span             = DM_TRIALS_PER_CHUNK * process_config.dm_step  # 每张图的物理 DM 宽度
     dm_per_pixel_trials = DM_TRIALS_PER_CHUNK // 512                    # 固定为每像素 2 个 trial
-    dm_per_pixel        = (
-        dm_per_pixel_trials * process_config.dm_step
-    )  # 每个像素的物理 DM 宽度
+    dm_per_pixel        = dm_per_pixel_trials * process_config.dm_step
     time_pool = block_size // 512  # 时间轴 pool 的倍数（block_size → 512）
-    _, _, dm_last_trial = _dm_grid_geometry(process_config)
     dm_max = process_config.dm_min + process_config.dm_range
 
     # 相邻 block 重叠 comb_file - block_file 个 fits；sliding-window 缓存让每个文件只读一次盘
@@ -1045,8 +999,8 @@ def process_fits_list(
     prefetch_futures = {}
     random_generator = np.random.default_rng()
 
-    # n_search_files 之后的文件只作消色散读取提前量，不再为其启动检索 block
-    searchable_file_count = input_file_count - read_prefix_files
+    # n_search_files 之外的文件仅提供色散读取余量，不启动搜索 block。
+    searchable_file_count = len(fits_list) - read_prefix_files
     search_file_count     = (
         searchable_file_count
         if n_search_files is None
@@ -1054,9 +1008,7 @@ def process_fits_list(
     )
     search_start     = read_prefix_files
     search_stop      = search_start + search_file_count
-    last_block_start = (
-        search_start + ((max(search_file_count, 1) - 1) // block_file) * block_file
-    )
+    last_block_start = search_start + ((max(search_file_count, 1) - 1) // block_file) * block_file
     final_read_stop = min(
         len(fits_list),
         last_block_start - required_prefix_files + comb_file,
@@ -1069,9 +1021,7 @@ def process_fits_list(
     )
     with (
         manifest_context as manifest_stream,
-        ThreadPoolExecutor(
-            max_workers=int(process_config.fits_prefetch_workers)
-        ) as prefetch_executor,
+        ThreadPoolExecutor(max_workers=int(process_config.fits_prefetch_workers)) as prefetch_executor,
     ):
         for i in range(search_start, search_stop, block_file):
             filename = os.path.splitext(os.path.basename(fits_list[i]))[0]
@@ -1095,16 +1045,15 @@ def process_fits_list(
             prefix_padding_files = max(0, -input_start)
             read_start           = max(0, input_start)
             read_stop            = min(len(fits_list), input_start + comb_file)
-            needed               = [
+            needed = [
                 fits_list[file_index]
-                for file_index in range(read_start, max(read_start, read_stop))
+                for file_index in range(read_start, read_stop)
             ]
             for fp in list(file_cache):
                 if fp not in needed:
                     del file_cache[fp]
 
-            # 当前窗口和紧随其后的若干 FITS 一起排队。这样第一个窗口也可并行读取，
-            # 后续 GPU 计算期间则保持同样数量的深度预读。调度不改变文件内容或顺序。
+            # 当前窗口和后续 FITS 按文件顺序进入预读队列，队列深度由 fits_prefetch_workers 控制。
             prefetch_stop = min(
                 final_read_stop,
                 read_stop + int(process_config.fits_prefetch_workers),
@@ -1164,9 +1113,7 @@ def process_fits_list(
             new_data = d_dm_time_g(raw_data, dd_cache, process_config)
 
             # ── 全 GPU 后处理 ───────────────────────────────────────────────────
-            new_data_t = torch.from_dlpack(
-                new_data
-            )  # 零拷贝视图 (3, dm_trials, down_file_leng)
+            new_data_t = torch.from_dlpack(new_data)  # (3, dm_trials, down_file_leng)，零拷贝视图
 
             num_slices = down_file_leng // block_size
             if process_config.verbose:
@@ -1207,9 +1154,7 @@ def process_fits_list(
                             f"decode_fn 第 {idx} 张图必须返回 (N, 2) centers，"
                             f"实际为 {pred_centers.shape}"
                         )
-                    if pred_scores is not None and len(pred_scores) != len(
-                        pred_centers
-                    ):
+                    if pred_scores is not None and len(pred_scores) != len(pred_centers):
                         raise ValueError(
                             f"decode_fn 第 {idx} 张图的 scores/centers 数量不一致："
                             f"{len(pred_scores)} != {len(pred_centers)}"
@@ -1219,14 +1164,8 @@ def process_fits_list(
                         cx, cy = float(center[0]), float(center[1])
                         if not np.isfinite(cx) or not np.isfinite(cy):
                             continue
-                        score_val = (
-                            float(pred_scores[center_idx])
-                            if pred_scores is not None
-                            else 0.0
-                        )
-                        dm_value = (
-                            process_config.dm_min + d * dm_span + cy * dm_per_pixel
-                        )
+                        score_val = float(pred_scores[center_idx]) if pred_scores is not None else 0.0
+                        dm_value = process_config.dm_min + d * dm_span + cy * dm_per_pixel
                         if dm_value <= process_config.dm_threshold:
                             continue
                         toa_samp = int(round(cx * time_pool + j * block_size))
@@ -1245,14 +1184,10 @@ def process_fits_list(
                 if not candidates:
                     continue
 
-                # cutout 只由起始采样和每个细通道的整数时移决定。按这两个精确量分组，
-                # full/low/high 的等价候选可以安全复用；不做会改变输入数据的近似合并。
+                # 仅共享起始采样和逐细通道整数时移完全相同的 cutout。
                 cutout_groups = {}
                 for cand in candidates:
-                    start_down = max(
-                        0,
-                        cand["toa_samp"] - process_config.class_block_size // 2,
-                    )
+                    start_down = max(0, cand["toa_samp"] - process_config.class_block_size // 2)
                     shift_signature = (
                         np.trunc(
                             np.float32(cand["dm_value"]) * dd_cache.shift_unit_raw_cpu,
@@ -1260,10 +1195,7 @@ def process_fits_list(
                         .astype(np.int32)
                         .tobytes()
                     )
-                    cutout_groups.setdefault(
-                        (start_down, shift_signature),
-                        [],
-                    ).append(cand)
+                    cutout_groups.setdefault((start_down, shift_signature), []).append(cand)
                 candidate_groups = list(cutout_groups.values())
                 if process_config.verbose and len(candidate_groups) < len(candidates):
                     print(
@@ -1271,8 +1203,7 @@ def process_fits_list(
                         f"{len(candidates)} exactly equivalent cutouts"
                     )
 
-                # 分类显存严格受 classifier_batch_size 限制；kernel 直接写入 batch，
-                # 不再分配每候选临时 cutout，也不再保留全部候选后统一 stack。
+                # kernel 按 classifier_batch_size 直接生成分类 batch，控制 cutout 显存占用。
                 npy_paths     = {}
                 display_cache = {}
                 for batch_start in range(
@@ -1289,9 +1220,7 @@ def process_fits_list(
                         ),
                         dtype=cp.float32,
                     )
-                    for burst_index, candidate_group in enumerate(
-                        batch_candidate_groups,
-                    ):
+                    for burst_index, candidate_group in enumerate(batch_candidate_groups):
                         cand = candidate_group[0]
                         _dedisperse_cutout_postdown_gpu(
                             dd_cache,
@@ -1323,6 +1252,7 @@ def process_fits_list(
                     ):
                         if cls_score <= process_config.class_threshold:
                             continue
+                        burst_for_plot = new_burst.cpu().numpy() if process_config.save_plot else None
                         for cand in candidate_group:
                             k, d = divmod(cand["idx"], num_dm_chunks)
 
@@ -1356,10 +1286,7 @@ def process_fits_list(
                                     base_display = (
                                         img_batch_flat[cand["idx"]].cpu().numpy() * 255
                                     ).astype(np.uint8)
-                                    base_display = cv2.cvtColor(
-                                        base_display,
-                                        cv2.COLOR_GRAY2BGR,
-                                    )
+                                    base_display = cv2.cvtColor(base_display, cv2.COLOR_GRAY2BGR)
                                     display_cache[cand["idx"]] = base_display
                                 img_display = base_display.copy()
                                 _draw_detection(img_display, cand["cx"], cand["cy"])
@@ -1370,7 +1297,7 @@ def process_fits_list(
                                 )
                                 _save_plot(
                                     img_display,
-                                    new_burst.cpu().numpy(),
+                                    burst_for_plot,
                                     jpg_path,
                                     d,
                                     block_size,
@@ -1405,6 +1332,8 @@ def process_fits_list(
                                     ),
                                     "time_reso": float(time_reso),
                                     "down_time_rate": int(down_time_rate),
+                                    "rfi_down_time_rate": int(rfi_down_time_rate),
+                                    "rfi_time_reso": float(time_reso * rfi_down_time_rate),
                                     "file_leng": int(file_leng),
                                     "slice_index": int(j),
                                     "freq_slice": int(k),
@@ -1416,9 +1345,7 @@ def process_fits_list(
                                     "det_score": float(cand["score"]),
                                     "class_score": float(cls_score),
                                     "det_prob": float(process_config.det_prob),
-                                    "class_threshold": float(
-                                        process_config.class_threshold
-                                    ),
+                                    "class_threshold": float(process_config.class_threshold),
                                     "dm_threshold": float(process_config.dm_threshold),
                                     "dm_min": float(process_config.dm_min),
                                     "dm_range": float(process_config.dm_range),
@@ -1439,10 +1366,7 @@ def process_fits_list(
                                     "npy_path": npy_path,
                                 }
                                 manifest_stream.write(
-                                    json.dumps(
-                                        record, ensure_ascii=False, sort_keys=True
-                                    )
-                                    + "\n"
+                                    json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
                                 )
                     del burst_batch
 
