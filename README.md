@@ -343,7 +343,6 @@ PRESTO 对照见
 python -c "import numpy, scipy, h5py, astropy, torch, torchvision; print('common imports OK')"
 python -c "import torch, cupy; assert torch.cuda.is_available(); print('CUDA devices', torch.cuda.device_count(), cupy.cuda.runtime.getDeviceCount())"
 python -c "from pathlib import Path; paths = [Path('search_pipeline/models/object_best_model_centernet_conv_tiny_ema_v10.pth'), Path('search_pipeline/models/binary_best_model_conv_small_ema.pth')]; assert all(p.is_file() for p in paths), paths; print('search weights OK')"
-python -m unittest discover -s search_pipeline/tests -v
 python -m unittest discover -s injection_benchmark/tests -v
 python -m compileall -q \
   dataset_generation \
