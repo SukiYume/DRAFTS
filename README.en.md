@@ -32,14 +32,18 @@ finding fast radio bursts (FRBs) and other single pulses in radio-telescope
 observations. It combines accelerated de-dispersion, object detection, and
 candidate classification in one trainable and deployable workflow.
 
-The three core stages are:
+The production search has four stages:
 
-1. **CUDA-accelerated de-dispersion** to construct the time–DM search
-   representation;
-2. **CenterNet object detection** to locate candidates and estimate their time
-   of arrival (TOA) and dispersion measure (DM);
-3. **ConvNeXt binary classification** to reject false positives and reduce
-   manual inspection.
+1. **FITS organization and prefetching** groups tasks by source/date/beam.
+   CPU threads read the current window and upcoming FITS files, and standard
+   multi-polarization data combine the first two polarizations during decoding;
+2. **GPU de-dispersion and preprocessing** upload each native-resolution window
+   once as a compact `uint16` array, then apply dynamic RFI masking,
+   fine-channel de-dispersion, and time/frequency downsampling on the GPU;
+3. **CenterNet object detection** locates candidates in 512 × 512 time–DM maps
+   and estimates time of arrival (TOA) and dispersion measure (DM);
+4. **ConvNeXt binary classification** evaluates de-dispersed candidate cutouts
+   in bounded batches and selects the final candidates.
 
 This repository contains the current DRAFTS workflows for training-data
 generation, CenterNet training, ConvNeXt classifier training, searches of real
@@ -51,7 +55,9 @@ FAST observations, and raw8/packed2 injection evaluation.
 ### Highlights
 
 - End-to-end coverage from training-data construction to production search;
-- GPU-oriented de-dispersion, detection, and candidate classification;
+- GPU-resident RFI processing, fine-channel de-dispersion, downsampling,
+  detection, and classification, with DLPack sharing memory between CuPy and
+  PyTorch;
 - A two-stage detector/classifier design for localization and verification;
 - Search entry points organized around real FAST observations;
 - Reproducible raw8/packed2 injection campaigns and a PRESTO baseline;
@@ -67,10 +73,12 @@ flowchart LR
     B --> C["time–DM H5 training set"]
     C --> D["CenterNet detector training<br/>object_detection"]
     C --> E["ConvNeXt classifier training<br/>binary_classification"]
-    F["Real FAST observation"] --> G["CUDA de-dispersion"]
+    F["Real FAST FITS"] --> P["CPU grouping, decoding,<br/>and threaded prefetch"]
+    P --> U["Native-resolution uint16<br/>one upload per window"]
+    U --> G["GPU dynamic RFI, fine-channel de-dispersion,<br/>time/frequency downsampling"]
     G --> D2["CenterNet candidate localization"]
     D2 --> E2["ConvNeXt candidate verification"]
-    E2 --> H["TOA / DM candidates<br/>diagnostic products"]
+    E2 --> H["candidate manifest<br/>TOA / DM and diagnostics"]
     I["raw8 / packed2 injections"] --> J["DRAFTS search runtime"]
     J --> K["truth matching<br/>recall / false positives / localization"]
 ```
@@ -88,6 +96,7 @@ flowchart LR
 | [`dataset_generation/`](dataset_generation/) | Inject simulated FRBs into real FAST backgrounds and build 512 × 512 time–DM H5 training sets. |
 | [`object_detection/`](object_detection/) | Train, evaluate, and run the current CenterNet detector. |
 | [`binary_classification/`](binary_classification/) | Train and evaluate ConvNeXt/SPPConvNeXt candidate classifiers. |
+| [`anomaly_detection/`](anomaly_detection/) | Train and evaluate ConvNeXt autoencoder/VAE models for dynamic-spectrum anomaly detection. |
 | [`search_pipeline/`](search_pipeline/) | Deployable real-observation search, fixed-DM follow-up, PBS submission, and benchmarks. |
 | [`injection_benchmark/`](injection_benchmark/) | raw8/packed2 generation, DRAFTS search, truth matching, aggregation, and the PRESTO baseline. |
 | [`requirements.txt`](requirements.txt) | Common Python dependencies; install CUDA packages for the target machine separately. |
@@ -236,7 +245,36 @@ self-contained runtime directory.
 | PBS batch submission | `s-pbsspt.py` |
 | Binary-classifier comparison | `t-binary-bench.sh` |
 
-Generic blind-search example:
+### Production search over unknown DM
+
+Build a task manifest before scanning a large directory tree. Every PBS
+section then loads the same manifest without repeating the shared-filesystem
+walk. `d-center-binary-gate.py` configures the physical DM grid with `dm_min`,
+`dm_range`, and `dm_step`, and automatically adds the FITS overlap required at
+section boundaries.
+
+```bash
+cd search_pipeline
+
+python c-manifest-build.py \
+  --data-path /path/to/fast_observations \
+  --beam-filter all \
+  --output /path/to/runtime/task_manifest.json
+
+python s-pbsspt.py \
+  --script d-center-binary-gate.py \
+  --nodes 1:8 \
+  --job-name drafts \
+  --dry-run
+```
+
+Configure the models, DM grid, manifest, output root, and beam selection at the
+bottom of `d-center-binary-gate.py`. Inspect the generated PBS files, then
+remove `--dry-run` to submit them. The submitter reads `section_num` from the
+entry script and distributes logical sections evenly across GPU jobs.
+`--workers-per-gpu` separately limits concurrent search processes on each GPU.
+
+Use the command-line wrapper for a single-section check:
 
 ```bash
 python search_pipeline/t-blind-section.py \
@@ -244,12 +282,34 @@ python search_pipeline/t-blind-section.py \
   --data-path /path/to/fast_observation \
   --output-root /path/to/drafts_search_output \
   --gpu-num 1 \
-  --beam M01
+  --beam M01 \
+  --dm-min 0 \
+  --dm-range 4096 \
+  --dm-step 1
 ```
 
-Place detector and classifier checkpoints in `search_pipeline/models/` before running
-the search. The full CLI, manifest workflow, fixed-DM mode, output layout, and
-troubleshooting guide are documented in
+Each search process uses `fits_prefetch_workers` CPU threads to read and cache
+FITS files. The queue prepares upcoming files while the GPU handles the current
+window. Candidate products are written to
+`<save_base>/<source>/CentData/<date>/<beam>/`, with absolute MJD, TOA, DM,
+model scores, and diagnostic paths recorded in `candidate_manifest.jsonl`.
+
+### Fixed-DM follow-up
+
+`d-dm-time-predown.py` de-disperses at one known DM and applies the binary
+classifier at configurable integer time-downsampling rates. The generic entry
+defaults to `prob=0.6`, `section_num=32`, and rate `[8]`; multiple valid rates
+can be supplied through `down_sampling_rate_list`. Adjacent sliding windows
+reuse decoded FITS data.
+
+Outputs use `<save_base>/<source>/CalData/<date>/<beam>/<rate>/`. When the final
+component of `save_base` already matches the source name, the entry reuses that
+directory and keeps one source component in the path.
+
+Place detector and classifier checkpoints in `search_pipeline/models/` before
+running the search. The full parameter reference, FITS-prefetch behavior,
+manifest workflow, fixed-DM mode, output layout, and troubleshooting guide are
+documented in
 [`search_pipeline/README.md`](search_pipeline/README.md).
 
 ## Injection benchmark
@@ -298,6 +358,7 @@ repository root:
 python -c "import numpy, scipy, h5py, astropy, torch, torchvision; print('common imports OK')"
 python -c "import torch, cupy; assert torch.cuda.is_available(); print('CUDA devices', torch.cuda.device_count(), cupy.cuda.runtime.getDeviceCount())"
 python -c "from pathlib import Path; paths = [Path('search_pipeline/models/object_best_model_centernet_conv_tiny_ema_v10.pth'), Path('search_pipeline/models/binary_best_model_conv_small_ema.pth')]; assert all(p.is_file() for p in paths), paths; print('search weights OK')"
+python -m unittest discover -s search_pipeline/tests -v
 python -m unittest discover -s injection_benchmark/tests -v
 python -m compileall -q \
   dataset_generation \

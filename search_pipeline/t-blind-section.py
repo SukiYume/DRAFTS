@@ -10,13 +10,12 @@ Example, production-like CRAFTS parameters on one local section:
         --data-path /path/to/observations/source/date \
         --output-root /home/ykzhang/data_searching/outputs/blind \
         --beam M01 \
-        --dm-range 4096 --dm-scale 1 --dm-offset 0 \
-        --dm-threshold 10 --block-size 4096 --dm-span 1024 --det-prob 0.45
+        --dm-min 0 --dm-range 4096 --dm-step 1 \
+        --dm-threshold 10 --block-size 4096 --det-prob 0.45
 """
 
 import argparse
 import importlib.util
-import inspect
 import os
 import sys
 from pathlib import Path
@@ -54,12 +53,11 @@ def parse_args():
     )
     parser.add_argument("--beam", type=str, default="M01")
     parser.add_argument("--gpu-num", type=int, default=8)
-    parser.add_argument("--dm-range", type=int, default=4096)
-    parser.add_argument("--dm-scale", type=float, default=1.0)
-    parser.add_argument("--dm-offset", type=float, default=0.0)
+    parser.add_argument("--dm-min", type=float, default=0.0)
+    parser.add_argument("--dm-range", type=float, default=4096.0)
+    parser.add_argument("--dm-step", type=float, default=1.0)
     parser.add_argument("--dm-threshold", type=float, default=50.0)
     parser.add_argument("--block-size", type=int, default=8192)
-    parser.add_argument("--dm-span", type=int, default=1024)
     parser.add_argument("--det-prob", type=float, default=0.45)
     parser.add_argument("--time-factor", type=float, default=8.0)
     parser.add_argument("--dry-run", action="store_true")
@@ -81,12 +79,11 @@ def main():
     output_root     = Path(args.output_root).resolve()
 
     process_config = gate.ProcessConfig(
+        dm_min       = args.dm_min,
         dm_range     = args.dm_range,
-        dm_scale     = args.dm_scale,
-        dm_offset    = args.dm_offset,
+        dm_step      = args.dm_step,
         dm_threshold = args.dm_threshold,
         block_size   = args.block_size,
-        dm_span      = args.dm_span,
         det_prob     = args.det_prob,
         section_num  = args.gpu_num,
         time_factor  = args.time_factor,
@@ -95,9 +92,9 @@ def main():
     print(f"[Run] section={args.section} data_path={args.data_path}", flush=True)
     print(f"[Run] output_root={output_root}", flush=True)
     print(
-        f"[Run] dm_range={args.dm_range} dm_scale={args.dm_scale} dm_offset={args.dm_offset} "
+        f"[Run] dm_min={args.dm_min} dm_range={args.dm_range} dm_step={args.dm_step} "
         f"dm_threshold={args.dm_threshold} block_size={args.block_size} "
-        f"dm_span={args.dm_span} time_factor={args.time_factor}",
+        f"time_factor={args.time_factor}",
         flush=True,
     )
     print(f"[Run] detector={args.detector_type} ckpt={detector_ckpt}", flush=True)
@@ -110,11 +107,13 @@ def main():
         model_name = "convnext_small",
     )
 
-    all_file_lists  = gate.organize_file_lists(args.data_path, args.beam)
-    distribute_args = [all_file_lists, process_config.section_num, args.section]
-    if len(inspect.signature(gate.distribute_file_lists).parameters) >= 4:
-        distribute_args.append(process_config)
-    section_file_lists = gate.distribute_file_lists(*distribute_args)
+    all_file_lists     = gate.organize_file_lists(args.data_path, args.beam)
+    section_file_lists = gate.distribute_file_lists(
+        all_file_lists,
+        process_config.section_num,
+        args.section,
+        process_config,
+    )
 
     print(
         f"[Run] total_file_lists={len(all_file_lists)} section_file_lists={len(section_file_lists)}",
@@ -149,11 +148,14 @@ def main():
             f"[Run] processing {identifier}: files={len(fits_list)} save_path={save_path}",
             flush=True,
         )
-        process_kwargs = {"decode_fn": decode_fn}
-        if "n_search_files" in inspect.signature(gate.process_fits_list).parameters:
-            process_kwargs["n_search_files"] = info.get("n_search_files")
         gate.process_fits_list(
-            fits_list, save_path, model, class_model, process_config, **process_kwargs
+            fits_list,
+            save_path,
+            model,
+            class_model,
+            process_config,
+            decode_fn      = decode_fn,
+            n_search_files = info.get("n_search_files"),
         )
         print(f"[Run] done {identifier}", flush=True)
 

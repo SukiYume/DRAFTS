@@ -1,20 +1,19 @@
 # fmt: off
-"""两阶段搜索的 gate / 调度入口。
+"""原始分辨率 GPU 两阶段搜索的 gate / 调度入口。
 
 职责：
-  1. 解析数据路径（支持 source/date/ 直接含 fits 或 source/ 含多个 date 子目录）
-  2. 按 source/date/beam 聚合后切片分配给当前 section（一块 GPU 可能同时跑多个 section，
-     取决于 s-pbsspt.py 的 workers_per_gpu）
-  3. 加载检测模型（CenterNet）+ binary 分类器
-  4. 调 :func:`d_center_binary_core.process_fits_list` 处理每个任务
+  1. 解析数据路径（支持 source/date/ 直接含 FITS 或 source/ 含多个 date 子目录）
+  2. 按 source/date/beam 聚合后切片分配给当前 section
+  3. 加载 CenterNet detector 和 binary 分类器
+  4. 调用 :mod:`d-center-binary-core.py` 完成动态 RFI、细通道消色散和两阶段推理
   5. 维护 ``processing_log.txt`` 实现任务级断点续跑
 
-切换模型：编辑下方 ``DETECTOR_TYPE`` / ``DETECTOR_CKPT`` /
-``CLASSIFIER_MODEL_NAME`` / ``CLASSIFIER_CKPT``。
+DM 参数均为真实物理量。默认盲搜区间为 ``[0, 4096)`` pc cm^-3，步长为
+1 pc cm^-3；原始时间和频率数据上传 GPU 后才做消色散与下采样。
 
 Usage:
   CUDA_VISIBLE_DEVICES=0 python d-center-binary-gate.py 0
-  # PBS 生产运行通过 s-pbsspt.py 提交；section_num 应等于 GPU 数 x workers_per_gpu。
+  # PBS 生产运行使用 s-pbsspt.py；提交器按 section_num 分配全部 section。
 """
 
 import importlib.util
@@ -36,7 +35,7 @@ torch.set_num_interop_threads(1)
 
 
 # ---------------------------------------------------------------------------
-# 加载 core 模块（文件名带短横线，需要 importlib spec_from_file_location）
+# 加载 core（文件名带短横线，需要 importlib spec_from_file_location）
 # ---------------------------------------------------------------------------
 
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
@@ -50,13 +49,12 @@ spec.loader.exec_module(core)
 
 ProcessConfig              = core.ProcessConfig
 process_fits_list          = core.process_fits_list
-compute_dispersion_overlap = core.compute_dispersion_overlap
+compute_dispersion_margins = core.compute_dispersion_margins
 device                     = core.device
 
 
 # ---------------------------------------------------------------------------
 # 模型加载：CenterNet → 统一返回 (model, decode_fn)
-# decode_fn 签名:  (raw_pred, conf_thr, iou_thr) -> list[(scores_np, boxes_cxcywh_np)]
 # ---------------------------------------------------------------------------
 
 CENTERNET_BACKBONES = {
@@ -67,50 +65,28 @@ VALID_DETECTORS = " / ".join(CENTERNET_BACKBONES)
 
 
 def _load_checkpoint(ckpt_path):
-    """兼容纯 state_dict / 完整 checkpoint dict。"""
+    """兼容纯 state_dict、EMA checkpoint 和 DataParallel 前缀。"""
     try:
         state = torch.load(ckpt_path, map_location=device, weights_only=False)
     except TypeError:
         state = torch.load(ckpt_path, map_location=device)
-    if isinstance(state, dict) and "model_state_dict" in state:
+    if isinstance(state, dict) and "ema_state_dict" in state:
+        state = state["ema_state_dict"]
+    elif isinstance(state, dict) and "model_state_dict" in state:
         state = state["model_state_dict"]
+    if isinstance(state, dict):
+        state = {key.removeprefix("module."): value for key, value in state.items()}
     return state
 
 
 def _load_eval_model(model, ckpt_path):
-    """加载权重并切到 eval。"""
-    state = _load_checkpoint(ckpt_path)
-    model.load_state_dict(state, strict=True)
+    """加载权重并切换到 GPU eval 模式。"""
+    model.load_state_dict(_load_checkpoint(ckpt_path), strict=True)
     return model.to(device).eval()
 
 
-def _make_centernet_decode_fn(decode_centernet_outputs):
-    """把 CenterNet 的 centers 解码适配成统一的 boxes 接口。"""
-
-    def decode_fn(raw_pred, conf_thr=0.3, iou_thr=None, topk=100):
-        res = decode_centernet_outputs(
-            raw_pred, conf_thr=conf_thr, topk=topk, down_ratio=4
-        )
-        out = []
-        for s, c in res:
-            if c is None:
-                out.append((None, None))
-                continue
-            zeros = np.zeros(len(c), dtype=np.float32)
-            boxes = np.column_stack([c[:, 0], c[:, 1], zeros, zeros]).astype(np.float32)
-            out.append((s.astype(np.float32), boxes))
-        return out
-
-    return decode_fn
-
-
 def load_detector(detector_type, ckpt_path):
-    """根据 type 字符串构建检测模型并加载权重。返回 ``(model, decode_fn)``。
-
-    detector_type:
-        - ``centernet_conv_tiny``      → CenterNet(convnext_tiny) + 中心点解码
-        - ``centernet_conv_small``     → CenterNet(convnext_small) + 中心点解码
-    """
+    """构建 CenterNet detector，加载权重并返回原生中心点解码函数。"""
     name = detector_type.lower()
     if name in CENTERNET_BACKBONES:
         from centernet_eval import decode_centernet_outputs
@@ -121,10 +97,7 @@ def load_detector(detector_type, ckpt_path):
             pretrained = False,
             head_ch    = 128,
         )
-        return _load_eval_model(model, ckpt_path), _make_centernet_decode_fn(
-            decode_centernet_outputs
-        )
-
+        return _load_eval_model(model, ckpt_path), decode_centernet_outputs
     raise ValueError(
         f"Unknown detector_type {detector_type!r}; valid: {VALID_DETECTORS}"
     )
@@ -137,7 +110,7 @@ def load_binary_classifier(
     num_classes=2,
     dropout=0.5,
 ):
-    """构建 binary 分类器 + 加载权重；兼容纯 state_dict 与完整 checkpoint dict。"""
+    """构建 binary 分类器并加载权重。"""
     model = build_binary_model(
         model_type  = model_type,
         model_name  = model_name,
@@ -149,60 +122,49 @@ def load_binary_classifier(
 
 
 # ---------------------------------------------------------------------------
-# 路径聚合 + 多 section 分配（与 d-dm-time-predown.py 一致）
+# 路径聚合 + 多 section 分配
 # ---------------------------------------------------------------------------
 
 
 def organize_file_lists(
     data_path: str, beam_filter: Optional[str] = None
 ) -> List[Tuple[str, List[str], dict]]:
-    """按 source/date/beam 聚合 fits 文件列表。
-
-    Returns
-    -------
-    List of ``(identifier, files_list, path_info)``；``path_info`` 是
-    ``{'source': str, 'date': str, 'beam': str}``。
-    """
+    """按 source/date/beam 聚合 FITS 文件列表。"""
     result   = []
     path     = Path(data_path)
     all_fits = sorted(
         [
-            f.name
-            for f in path.iterdir()
-            if f.is_file()
-            and f.suffix == ".fits"
-            and not f.name.startswith(".")
-            and "_N_" not in f.name
-            and "_W_" not in f.name
-            and "_F_" not in f.name
+            item.name
+            for item in path.iterdir()
+            if item.is_file()
+            and item.suffix == ".fits"
+            and not item.name.startswith(".")
+            and "_N_" not in item.name
+            and "_W_" not in item.name
+            and "_F_" not in item.name
         ]
     )
 
     if all_fits:
-        # 按文件名里的 -Mxx_ 提取 beam；不含该标识的文件跳过，避免 .group(1) 对 None 崩溃
-        beam_match = {f: re.search(r"-(M\d{2})_", f) for f in all_fits}
-        skipped    = [f for f, m in beam_match.items() if m is None]
+        beam_match = {name: re.search(r"-(M\d{2})_", name) for name in all_fits}
+        skipped    = [name for name, match in beam_match.items() if match is None]
         if skipped:
-            print(f"[organize] {path}: 跳过 {len(skipped)} 个无 -Mxx_ beam 标识的 fits")
-        all_fits = [f for f in all_fits if beam_match[f] is not None]
-        beams    = np.unique([beam_match[f].group(1) for f in all_fits]).tolist()
+            print(f"[organize] {path}: 跳过 {len(skipped)} 个无 -Mxx_ beam 标识的 FITS")
+        all_fits = [name for name in all_fits if beam_match[name] is not None]
+        beams    = np.unique([beam_match[name].group(1) for name in all_fits]).tolist()
         if beam_filter and beam_filter != "all":
             beams = [beam_filter] if beam_filter in beams else []
 
-        # 从 fits 往前数：当前目录是 date，父目录是 source
         date_name   = path.name
         source_name = path.parent.name
-
         for beam in beams:
-            beam_files = sorted([str(path / f) for f in all_fits if beam in f])
+            beam_files = sorted([str(path / name) for name in all_fits if beam in name])
             if beam_files:
                 info       = {"source": source_name, "date": date_name, "beam": beam}
                 identifier = f"{source_name}_{date_name}_{beam}"
                 result.append((identifier, beam_files, info))
     else:
-        # 递归子目录
-        subdirs = sorted([d for d in path.iterdir() if d.is_dir()])
-        for subdir in subdirs:
+        for subdir in sorted([item for item in path.iterdir() if item.is_dir()]):
             result.extend(organize_file_lists(str(subdir), beam_filter))
 
     return result
@@ -211,7 +173,7 @@ def organize_file_lists(
 def organize_file_lists_from_roots(
     data_paths: List[str], beam_filter: Optional[str] = None
 ) -> List[Tuple[str, List[str], dict]]:
-    """Collect file lists from multiple data roots and keep the root in task metadata."""
+    """从多个数据根收集任务，并把输入根名称写入任务元数据。"""
     result = []
     for data_path in data_paths:
         root_label = Path(data_path).name
@@ -224,49 +186,57 @@ def organize_file_lists_from_roots(
 def load_file_lists_from_manifest(
     manifest_path: str,
 ) -> List[Tuple[str, List[str], dict]]:
-    """Load prebuilt task lists produced by c-manifest-build.py."""
-    with open(manifest_path, "r", encoding="utf-8") as f:
-        payload = json.load(f)
+    """读取 :mod:`c-manifest-build.py` 生成的任务清单。"""
+    with open(manifest_path, "r", encoding="utf-8") as stream:
+        payload = json.load(stream)
 
     tasks  = payload.get("tasks", payload) if isinstance(payload, dict) else payload
     result = []
-    for idx, task in enumerate(tasks):
+    for index, task in enumerate(tasks):
         try:
             identifier = task["identifier"]
             files      = task["files"]
             info       = task.get("info", {})
         except (TypeError, KeyError) as exc:
-            raise ValueError(f"Invalid manifest task at index {idx}: {task!r}") from exc
+            raise ValueError(
+                f"Invalid manifest task at index {index}: {task!r}"
+            ) from exc
         result.append((identifier, files, info))
     return result
 
 
 def distribute_file_lists(file_lists, section_num, section, process_config):
-    """把所有 (identifier, files, info) 均匀分配给指定 section。
-
-    单个连续观测按 section 切分时，给每段尾部补 ``dds_file`` 个文件作为消色散读取提前量
-    （与下一段重叠，只读不检索），避免段间接缝处高 DM 灵敏度下降；``info['n_search_files']``
-    记录本段实际需检索的文件数（不含重叠）。
-    """
+    """为 section 分配任务，并为负/正 DM 补足前、后读取余量。"""
+    if section_num <= 0:
+        raise ValueError(f"section_num={section_num} 必须大于 0")
+    if section < 0 or section >= section_num:
+        raise ValueError(f"section={section} 必须位于 [0, {section_num})")
     if len(file_lists) == 1:
         identifier, fits_list, info = file_lists[0]
-        section_size = len(fits_list) // section_num + 1
+        section_size = (len(fits_list) + section_num - 1) // section_num
         start_idx    = section * section_size
         end_idx      = (section + 1) * section_size
-        n_search     = len(fits_list[start_idx:end_idx])  # 本段实际要检索的文件数
+        n_search     = len(fits_list[start_idx:end_idx])
         if n_search == 0:
             return []
-        overlap  = compute_dispersion_overlap(fits_list[0], process_config)
-        sub_fits = fits_list[
-            start_idx : end_idx + overlap
-        ]  # 末尾多带 overlap 个重叠文件
-        info = {**info, "n_search_files": n_search}
+        pre_overlap, post_overlap = compute_dispersion_margins(
+            fits_list[0],
+            process_config,
+        )
+        read_start        = max(0, start_idx - pre_overlap)
+        real_prefix_files = start_idx - read_start
+        sub_fits          = fits_list[read_start : end_idx + post_overlap]
+        info              = {
+            **info,
+            "n_search_files": n_search,
+            "read_prefix_files": real_prefix_files,
+        }
         return [(f"{identifier}_section{section}", sub_fits, info)]
 
     return [
         (identifier, fits_list, info)
-        for idx, (identifier, fits_list, info) in enumerate(file_lists)
-        if idx % section_num == section
+        for index, (identifier, fits_list, info) in enumerate(file_lists)
+        if index % section_num == section
     ]
 
 
@@ -275,72 +245,68 @@ def distribute_file_lists(file_lists, section_num, section, process_config):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # ---- section 编号（由 s-pbsspt.py 生成的 PBS 脚本注入；一块 GPU 可能对应多个 section）----
     section = int(sys.argv[1]) if len(sys.argv) > 1 else 0
 
-    # ---- 算法配置 ----
+    # 盲搜默认区间：[0, 4096) pc cm^-3，共 4096 个 trial、4 张 DM-time 图。
     process_config = ProcessConfig(
-        dm_range     = 4096,  # 总 DM 扫描范围 / (1/dm_scale)
-        dm_scale     = 1,     # 每个 DM 索引对应的 DM 步长（pc cm^-3）
-        dm_offset    = 0,     # DM = idx * dm_scale + dm_offset
-        dm_threshold = 10,    # 低于该 DM 直接丢弃（视为 RFI）
-        block_size   = 4096,  # 每个时间切片的样本数（降采样后）
-        dm_span      = 1024,  # 每张 512x512 检测图覆盖的原始 DM 点数
-        det_prob     = 0.45,  # 中心检测置信度阈值
-        section_num  = 32,    # 与 PBS submission 展开后的总 section 数一致（= GPU 数 x workers_per_gpu）
-        time_factor  = 8,     # 控制 down_time_rate
+        dm_min                = 0,
+        dm_range              = 4096,
+        dm_step               = 1,
+        dm_threshold          = 10,
+        block_size            = 4096,
+        det_prob              = 0.45,
+        section_num           = 32,
+        time_factor           = 8,
+        fits_prefetch_workers = 2,
+        rfi_filter            = True,
+        rfi_level_ratio       = 0.05,
+        rfi_cv_ratio          = 3.0,
+        rfi_zero_dm_filter    = True,
+        rfi_zero_dm_sigma     = 8.0,
+        rfi_zero_dm_occupancy = 0.03,
     )
 
     # ---- 检测模型（默认使用 v10 CenterNet ConvNeXt Tiny）----
-    # detector 可选：centernet_conv_tiny / centernet_conv_small
-    # 默认权重：models/object_best_model_centernet_conv_tiny_ema_v10.pth
     DETECTOR_TYPE = "centernet_conv_tiny"
     DETECTOR_CKPT = "./models/object_best_model_centernet_conv_tiny_ema_v10.pth"
-
     model, decode_fn = load_detector(DETECTOR_TYPE, DETECTOR_CKPT)
     print(f"[Model] detector={DETECTOR_TYPE}  ckpt={DETECTOR_CKPT}")
 
-    # ---- binary 分类器（默认使用最近验证的 ConvNeXt Small）----
-    # classifier model_name 可选：convnext_tiny / convnext_small
+    # ---- binary 分类器 ----
     CLASSIFIER_MODEL_NAME = "convnext_small"
     CLASSIFIER_CKPT       = "./models/binary_best_model_conv_small_ema.pth"
     class_model           = load_binary_classifier(
-        CLASSIFIER_CKPT, model_type="ConvNeXtNet", model_name=CLASSIFIER_MODEL_NAME
+        CLASSIFIER_CKPT,
+        model_type = "ConvNeXtNet",
+        model_name = CLASSIFIER_MODEL_NAME,
     )
     print(f"[Model] classifier ckpt={CLASSIFIER_CKPT}")
 
     # ---- 路径配置 ----
-    log_file      = "./processing_log_zd202x_1_1_2bit.txt"
+    log_file      = "./processing_log.txt"
     bad_fits_log  = os.path.splitext(log_file)[0] + "_bad_fits.log"
-    task_manifest = "/path/to/observations/CRAFTS/task_manifest_zd202x_1_1_2bit.json"
-    data_path     = None  # 单目标模板替换用；非 None 时覆盖 data_paths
+    task_manifest = "/path/to/observations/CRAFTS/task_manifest.json"
+    data_path     = None
     data_paths    = [
         "/path/to/CRAFTS/",
     ]
     save_base   = "/path/to/observations/CRAFTS/"
-    beam_filter = "all"  # 'M01' / 'M02' / 'all' / None
+    beam_filter = "all"
 
-    # ---- 路径配置示例 ----
-    # log_file    = './processing_log.txt'
-    # data_path   = '/path/to/observations/source/date/'
-    # save_base   = '/path/to/observations/'
-    # beam_filter = 'M01'                                     # 'M01' / 'M02' / 'all' / None
-
-    # 备用配置示例
-    # data_path   = '/path/to/another/source/date/'
-    # data_path   = '/path/to/CRAFTS/'
+    # 单目标直接设置 data_path；它会覆盖 data_paths 和 task_manifest。
+    # data_path = '/path/to/observations/source/date/'
+    # save_base = '/path/to/observations/'
+    # beam_filter = 'M01'
     if data_path is not None:
         data_paths    = [data_path]
         task_manifest = None
 
-    # ---- 读取已完成任务（断点续跑）----
     completed_tasks = set()
     if os.path.exists(log_file):
-        with open(log_file, "r") as f:
-            completed_tasks = set(line.strip() for line in f if line.strip())
+        with open(log_file, "r", encoding="utf-8") as stream:
+            completed_tasks = {line.strip() for line in stream if line.strip()}
     print(f"Loaded {len(completed_tasks)} completed tasks from log")
 
-    # ---- 收集 + 分配 ----
     if task_manifest and os.path.exists(task_manifest):
         print(f"Loading file lists from manifest: {task_manifest}")
         all_file_lists = load_file_lists_from_manifest(task_manifest)
@@ -350,18 +316,20 @@ if __name__ == "__main__":
     print(f"Total file lists: {len(all_file_lists)}")
 
     section_file_lists = distribute_file_lists(
-        all_file_lists, process_config.section_num, section, process_config
+        all_file_lists,
+        process_config.section_num,
+        section,
+        process_config,
     )
     print(f"Section {section} processing {len(section_file_lists)} file lists")
 
     if section_file_lists:
         print(f"\nTask Summary for Section {section}:")
-        for identifier, fits_list, info in section_file_lists:
+        for identifier, fits_list, _ in section_file_lists:
             status = "COMPLETED" if identifier in completed_tasks else "PENDING"
             print(f"  [{status}] {identifier}: {len(fits_list)} files")
         print()
 
-    # ---- 主循环 ----
     failures = []
     for identifier, fits_list, info in section_file_lists:
         if identifier in completed_tasks:
@@ -371,14 +339,13 @@ if __name__ == "__main__":
         print(
             f"\n{'=' * 60}\nProcessing: {identifier}\nFiles: {len(fits_list)}\n{'=' * 60}"
         )
-        # root 只用于区分输入任务，不参与输出目录拼接。
         save_path = (
             str(
                 Path(save_base)
                 / info["source"]
                 / "CentData"
                 / info["date"]
-                / info["beam"]
+                / info["beam"],
             )
             + os.sep
         )
@@ -400,9 +367,8 @@ if __name__ == "__main__":
                 bad_fits_log    = bad_fits_log,
             )
             print(f"Successfully processed {identifier}")
-            # 记录完成
-            with open(log_file, "a") as f:
-                f.write(f"{identifier}\n")
+            with open(log_file, "a", encoding="utf-8") as stream:
+                stream.write(f"{identifier}\n")
             completed_tasks.add(identifier)
         except Exception as exc:
             print(f"Error processing {identifier}: {exc}")

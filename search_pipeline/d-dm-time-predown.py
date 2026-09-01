@@ -43,9 +43,9 @@ class ProcessConfig:
     """算法 / 运行时超参数。"""
 
     DM: float                           = 273.5  # 用来做色散修正的 DM 值（pc cm^-3）
-    prob: float                         = 0.5    # 分类器判定阈值
+    prob: float                         = 0.6    # 分类器判定阈值
     block_size: int                     = 512    # 每张 512×512 图对应的时间样本数（降采样后）
-    section_num: int                    = 19     # section 总数（= GPU 数 x workers_per_gpu，见 s-pbsspt.py）
+    section_num: int                    = 32     # 逻辑 section 总数
     down_sampling_rate_list: np.ndarray = None   # 多尺度搜索（不同时间分辨率）
 
     def __post_init__(self):
@@ -415,8 +415,8 @@ def organize_file_lists_from_roots(
 def compute_dispersion_overlap(fits_file, config):
     """读取 ``fits_file`` 观测参数后返回相邻 section 边界所需的色散重叠文件数。
 
-    与 d-center-binary-core.compute_dispersion_overlap 逻辑一致，只是这里换算最大色散延迟
-    用的是固定 ``config.DM``，而不是 dm_range/dm_scale/dm_offset。
+    采用与 ``d-center-binary-core.compute_dispersion_margins`` 相同的色散延迟公式。
+    fixed-DM 入口使用 ``config.DM`` 计算最大延迟，并返回所需的后向重叠文件数。
     """
     with fits.open(fits_file, memmap=True, lazy_load_hdus=True) as f:
         time_reso = f[1].header["TBIN"]
@@ -498,15 +498,15 @@ def load_binary_classifier(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # ---- section 编号（由 s-pbsspt.py 生成的 PBS 脚本注入；一块 GPU 可能对应多个 section）----
+    # ---- section 编号；提交器传入该参数，直接运行时默认处理 section 0 ----
     section = int(sys.argv[1]) if len(sys.argv) > 1 else 0
     config  = ProcessConfig(
         DM                      = 273.5,
-        prob                    = 0.5,
+        prob                    = 0.6,
         block_size              = 512,
-        section_num             = 15,  # 与 PBS submission 展开后的总 section 数一致（= GPU 数 x workers_per_gpu）
-        # 多尺度搜索：覆盖窄/宽脉冲
-        down_sampling_rate_list = np.array([2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]),
+        section_num             = 32,  # 逻辑 section 总数
+        # 固定 8 倍降采样
+        down_sampling_rate_list = np.array([8]),
     )
 
     # ---- 模型 ----

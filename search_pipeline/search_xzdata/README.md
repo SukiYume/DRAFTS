@@ -58,6 +58,10 @@ bash /path/to/search_xzdata/run_fixed_dm_xz.sh status example_M01
 
 状态检查和空结果检查会递归覆盖配置中的所有下采样倍率，不假设固定的倍率目录。
 
+控制器显式传入 `XZ_SEARCH_PROBABILITY` 和 `XZ_SEARCH_DOWNSAMPLE_RATES`，因此每个目标的
+fixed-DM 配置独立于上一级脚本底部的通用默认值。底层搜索会为相邻滑动窗口缓存已解码
+FITS，并在 section 尾部读取额外 FITS 以覆盖色散延迟；额外文件只提供边界上下文。
+
 直接在 PBS 提交节点运行时，`XZ_SEARCH_PBS_SUBMIT_HOST` 留空；需要经登录节点提交时，
 将它设为主机名。`XZ_SEARCH_QSUB`、`XZ_SEARCH_QSTAT`、`XZ_SEARCH_SSH`、
 `XZ_SEARCH_PBS_QUEUE` 和 `XZ_SEARCH_PBS_GRES` 都可以按集群覆盖。

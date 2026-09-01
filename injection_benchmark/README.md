@@ -34,11 +34,11 @@ generate_injections.py
 | `truth_archive/` | 每个 batch/量化版本的 `truth_manifest.jsonl` 和 `run_config.json`，供 DL 和 PRESTO 共用。 |
 | `runs/` | DL 搜索、分析、汇总和日志目录；大体积注入 FITS 与其分开保存。 |
 
-`search_runtime/` 与 `search_pipeline/` 共享搜索模型实现。
-`binary_model.py`、`centernet_model.py` 和 `centernet_eval.py` 保持逐文件一致；
-`d-center-binary-core.py`、`d-center-binary-gate.py` 与 `t-blind-section.py` 保留
-注入评估所需的候选/proposal manifest、重叠 DM window、classifier time
-downsample 和物理 TOA-DM 去重接口。同步生产搜索改动后运行 campaign dry-run。
+`search_runtime/` 是注入基准的自包含运行时。`binary_model.py`、`centernet_model.py` 和
+`centernet_eval.py` 与生产搜索共享模型定义；benchmark core、gate 和 section wrapper
+使用由 campaign 固定的评估接口，包括 candidate/proposal manifest、重叠 DM window、
+classifier time downsample 和物理 TOA-DM 去重。移植生产搜索实现时需要同步适配
+`launch_search.py` 的参数契约，并运行 campaign dry-run 与 benchmark 测试确认输出可比性。
 
 ## 注入信号模型
 

@@ -32,12 +32,15 @@ pipeline，用于在射电望远镜观测数据中搜索快速射电暴（FRB）
 它把传统搜索链路中的消色散、候选定位和候选筛选组织成一套可训练、可部署、可评估的
 深度学习工作流。
 
-DRAFTS 的核心由三部分组成：
+DRAFTS 的生产搜索由四个阶段组成：
 
-1. **CUDA 加速消色散**：把观测数据转换为适合候选搜索的 time–DM 表示；
-2. **目标检测**：使用 CenterNet 从 time–DM 图中定位候选并估计到达时间（TOA）与
+1. **FITS 组织与预取**：按 source/date/beam 建立任务，CPU 线程提前读取当前窗口和后续
+   FITS；常规多偏振数据在解码时合并前两路偏振；
+2. **GPU 消色散与预处理**：每个原始分辨率窗口以紧凑的 `uint16` 数组上传一次，随后在
+   GPU 上完成动态 RFI、细通道消色散以及时间和频率下采样；
+3. **目标检测**：CenterNet 从 512 × 512 time–DM 图中定位候选并估计到达时间（TOA）与
    色散量（DM）；
-3. **二分类复核**：使用 ConvNeXt 系列分类器过滤伪候选，减少人工检查负担。
+4. **二分类复核**：ConvNeXt 对候选的消色散时频 cutout 分批复核，筛出最终候选。
 
 仓库包含当前使用的训练数据生成、CenterNet 训练、ConvNeXt 分类器训练、真实 FAST
 观测搜索，以及 raw8/packed2 注入评估工作流。
@@ -48,7 +51,8 @@ DRAFTS 的核心由三部分组成：
 ### 项目特点
 
 - **端到端搜索**：覆盖训练数据构建、模型训练、真实观测搜索和注入验证；
-- **GPU 友好**：消色散、目标检测和分类均可在 CUDA 环境中运行；
+- **GPU 常驻计算**：RFI、细通道消色散、降采样、目标检测和分类在同一 CUDA 流程中完成，
+  CuPy 与 PyTorch 通过 DLPack 共享显存；
 - **两阶段候选筛选**：CenterNet 负责定位，ConvNeXt 负责真实性判断；
 - **面向真实观测**：当前部署入口围绕 FAST 数据组织，同时保留扩展其他望远镜数据读取
   的接口；
@@ -66,10 +70,12 @@ flowchart LR
     B --> C["time–DM H5 训练集"]
     C --> D["CenterNet 检测器训练<br/>object_detection"]
     C --> E["ConvNeXt 分类器训练<br/>binary_classification"]
-    F["真实 FAST 观测"] --> G["CUDA 消色散"]
+    F["真实 FAST FITS"] --> P["CPU 分组、解码与线程预取"]
+    P --> U["原始分辨率 uint16<br/>每个窗口上传一次"]
+    U --> G["GPU 动态 RFI、细通道消色散<br/>时间与频率下采样"]
     G --> D2["CenterNet 候选定位"]
     D2 --> E2["ConvNeXt 候选复核"]
-    E2 --> H["TOA / DM 候选与诊断图"]
+    E2 --> H["candidate manifest<br/>TOA / DM 与诊断图"]
     I["raw8 / packed2 注入"] --> J["DRAFTS 搜索 runtime"]
     J --> K["truth matching<br/>召回率 / 误报率 / 定位误差"]
 ```
@@ -234,7 +240,33 @@ EPOCHS=50 \
 | PBS 批量提交 | `s-pbsspt.py` |
 | binary 模型对比 | `t-binary-bench.sh` |
 
-通用盲搜示例：
+### 未知 DM 生产流程
+
+大规模目录先生成任务 manifest。每个 PBS section 随后直接加载同一份任务清单，省去重复
+遍历共享文件系统。`d-center-binary-gate.py` 使用物理 DM 参数
+`dm_min`、`dm_range` 和 `dm_step`，并自动为 section 边界补足色散所需的前后 FITS。
+
+```bash
+cd search_pipeline
+
+python c-manifest-build.py \
+  --data-path /path/to/fast_observations \
+  --beam-filter all \
+  --output /path/to/runtime/task_manifest.json
+
+python s-pbsspt.py \
+  --script d-center-binary-gate.py \
+  --nodes 1:8 \
+  --job-name drafts \
+  --dry-run
+```
+
+生产运行前编辑 `d-center-binary-gate.py` 底部的模型、DM、manifest、输出和 beam 配置，
+检查 dry-run 生成的 PBS 文件，然后移除 `--dry-run` 提交。提交器从入口脚本读取
+`section_num`，把逻辑 section 均匀分给 GPU 作业；`--workers-per-gpu` 单独控制每块 GPU
+同时运行的搜索进程数。
+
+单 section 调试可直接使用命令行入口：
 
 ```bash
 python search_pipeline/t-blind-section.py \
@@ -242,11 +274,29 @@ python search_pipeline/t-blind-section.py \
   --data-path /path/to/fast_observation \
   --output-root /path/to/drafts_search_output \
   --gpu-num 1 \
-  --beam M01
+  --beam M01 \
+  --dm-min 0 \
+  --dm-range 4096 \
+  --dm-step 1
 ```
 
-搜索前需要把检测器和分类器权重放入 `search_pipeline/models/`。完整命令、manifest 构建、
-输出目录规则、fixed-DM 用法和排错表见 [`search_pipeline/README.md`](search_pipeline/README.md)。
+每个搜索进程用 `fits_prefetch_workers` 个 CPU 线程读取并缓存 FITS。GPU 处理当前窗口时，
+读取队列继续准备后续文件。候选输出写入
+`<save_base>/<source>/CentData/<date>/<beam>/`，并以 `candidate_manifest.jsonl` 记录可供
+后续裁切使用的绝对 MJD、TOA、DM、模型分数和诊断文件路径。
+
+### Fixed-DM follow-up
+
+`d-dm-time-predown.py` 在一个已知 DM 上消色散，并按配置的整数时间下采样倍率运行 binary
+分类器。通用入口默认使用 `prob=0.6`、`section_num=32` 和倍率 `[8]`；用户可以在
+`down_sampling_rate_list` 中配置多个合法倍率。相邻滑动窗口复用已解码 FITS。
+
+输出写入 `<save_base>/<source>/CalData/<date>/<beam>/<rate>/`。当 `save_base` 的末级目录
+已经等于 source 名时，入口会直接复用该目录，路径中只保留一层 source。
+
+搜索前需要把检测器和分类器权重放入 `search_pipeline/models/`。完整参数、FITS 预取、
+manifest、输出规则、fixed-DM 用法和排错表见
+[`search_pipeline/README.md`](search_pipeline/README.md)。
 
 ## 注入基准
 
@@ -293,6 +343,7 @@ PRESTO 对照见
 python -c "import numpy, scipy, h5py, astropy, torch, torchvision; print('common imports OK')"
 python -c "import torch, cupy; assert torch.cuda.is_available(); print('CUDA devices', torch.cuda.device_count(), cupy.cuda.runtime.getDeviceCount())"
 python -c "from pathlib import Path; paths = [Path('search_pipeline/models/object_best_model_centernet_conv_tiny_ema_v10.pth'), Path('search_pipeline/models/binary_best_model_conv_small_ema.pth')]; assert all(p.is_file() for p in paths), paths; print('search weights OK')"
+python -m unittest discover -s search_pipeline/tests -v
 python -m unittest discover -s injection_benchmark/tests -v
 python -m compileall -q \
   dataset_generation \

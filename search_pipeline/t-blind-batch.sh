@@ -4,7 +4,7 @@
 # Example, production-like CRAFTS search parameters:
 #   ROOT=/home/ykzhang/data_searching \
 #   OUTPUT_ROOT=/home/ykzhang/data_searching/outputs/blind \
-#   BEAM=all GPU_NUM=8 DM_THRESHOLD=10 BLOCK_SIZE=4096 DM_SPAN=1024 DET_PROB=0.45 \
+#   BEAM=all GPU_NUM=8 DM_THRESHOLD=10 BLOCK_SIZE=4096 DET_PROB=0.45 \
 #     bash t-blind-batch.sh /path/to/observations/source/date
 #
 # This direct launcher is for interactive compute nodes. On PBS-managed nodes,
@@ -22,12 +22,11 @@ DETECTOR_CKPT="${DETECTOR_CKPT:-models/object_best_model_centernet_conv_tiny_ema
 CLASSIFIER_CKPT="${CLASSIFIER_CKPT:-models/binary_best_model_conv_small_ema.pth}"
 BEAM="${BEAM:-M01}"
 GPU_NUM="${GPU_NUM:-8}"
+DM_MIN="${DM_MIN:-0}"
 DM_RANGE="${DM_RANGE:-4096}"
-DM_SCALE="${DM_SCALE:-1}"
-DM_OFFSET="${DM_OFFSET:-0}"
+DM_STEP="${DM_STEP:-1}"
 DM_THRESHOLD="${DM_THRESHOLD:-50}"
 BLOCK_SIZE="${BLOCK_SIZE:-8192}"
-DM_SPAN="${DM_SPAN:-2048}"
 DET_PROB="${DET_PROB:-0.45}"
 TIME_FACTOR="${TIME_FACTOR:-8}"
 
@@ -66,7 +65,7 @@ printf '[Launch] datasets=%s\n' "${DATASETS[@]}"
 echo "[Launch] detector=$DETECTOR_TYPE ckpt=$DETECTOR_CKPT"
 echo "[Launch] classifier_ckpt=$CLASSIFIER_CKPT"
 echo "[Launch] beam=$BEAM gpu_num=$GPU_NUM"
-echo "[Launch] dm_range=$DM_RANGE dm_scale=$DM_SCALE dm_offset=$DM_OFFSET dm_threshold=$DM_THRESHOLD block_size=$BLOCK_SIZE dm_span=$DM_SPAN time_factor=$TIME_FACTOR"
+echo "[Launch] dm_min=$DM_MIN dm_range=$DM_RANGE dm_step=$DM_STEP dm_threshold=$DM_THRESHOLD block_size=$BLOCK_SIZE time_factor=$TIME_FACTOR"
 echo "[Launch] python=$(command -v python)"
 python - <<'PY'
 import torch
@@ -91,12 +90,11 @@ for data_path in "${DATASETS[@]}"; do
       --classifier-ckpt "$CLASSIFIER_CKPT" \
       --beam "$BEAM" \
       --gpu-num "$GPU_NUM" \
+      --dm-min "$DM_MIN" \
       --dm-range "$DM_RANGE" \
-      --dm-scale "$DM_SCALE" \
-      --dm-offset "$DM_OFFSET" \
+      --dm-step "$DM_STEP" \
       --dm-threshold "$DM_THRESHOLD" \
       --block-size "$BLOCK_SIZE" \
-      --dm-span "$DM_SPAN" \
       --det-prob "$DET_PROB" \
       --time-factor "$TIME_FACTOR" \
       >"$log_file" 2>&1 &
