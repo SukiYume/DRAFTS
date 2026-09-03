@@ -20,6 +20,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 if [ "$#" -lt 2 ]; then
   echo "Usage: $0 \"<gpu_ids>\" <model>" >&2
   echo "  model: tiny | small | base | large | spp-tiny | spp-small" >&2
@@ -30,7 +32,7 @@ gpu_ids=$1
 model=$2
 
 # 可通过环境变量覆盖
-data_path=${DATA_PATH:-./Data/}
+data_path=${DATA_PATH:-${SCRIPT_DIR}/Data}
 batch_size=${BATCH_SIZE:-32}            # 0 → 让 binary_train.py 按 fix_size / DDP 自动选
 epochs=${EPOCHS:-50}
 num_workers=${NUM_WORKERS:-16}
@@ -44,27 +46,27 @@ export CUDA_VISIBLE_DEVICES="$gpu_ids"
 
 case "$model" in
   tiny)
-    log_dir=./logs/logs_binary_convnext_tiny
+    log_dir="${SCRIPT_DIR}/logs/logs_binary_convnext_tiny"
     model_args=(--model-type ConvNeXtNet --model-name convnext_tiny  --fix-size true)
     ;;
   small)
-    log_dir=./logs/logs_binary_convnext_small
+    log_dir="${SCRIPT_DIR}/logs/logs_binary_convnext_small"
     model_args=(--model-type ConvNeXtNet --model-name convnext_small --fix-size true)
     ;;
   base)
-    log_dir=./logs/logs_binary_convnext_base
+    log_dir="${SCRIPT_DIR}/logs/logs_binary_convnext_base"
     model_args=(--model-type ConvNeXtNet --model-name convnext_base  --fix-size true)
     ;;
   large)
-    log_dir=./logs/logs_binary_convnext_large
+    log_dir="${SCRIPT_DIR}/logs/logs_binary_convnext_large"
     model_args=(--model-type ConvNeXtNet --model-name convnext_large --fix-size true)
     ;;
   spp-tiny)
-    log_dir=./logs/logs_binary_spp_tiny
+    log_dir="${SCRIPT_DIR}/logs/logs_binary_spp_tiny"
     model_args=(--model-type SPPConvNeXt --model-name convnext_tiny  --fix-size false)
     ;;
   spp-small)
-    log_dir=./logs/logs_binary_spp_small
+    log_dir="${SCRIPT_DIR}/logs/logs_binary_spp_small"
     model_args=(--model-type SPPConvNeXt --model-name convnext_small --fix-size false)
     ;;
   *)
@@ -88,7 +90,7 @@ echo "================================================================"
 torchrun \
   --nproc_per_node "$nproc_per_node" \
   --master_port "$master_port" \
-  binary_train.py \
+  "${SCRIPT_DIR}/binary_train.py" \
   "${model_args[@]}" \
   --data-path "$data_path" \
   --log-dir "$log_dir" \

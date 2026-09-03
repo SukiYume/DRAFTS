@@ -26,6 +26,8 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
+BASE_DIR = Path(__file__).resolve().parent
+
 
 def setup_distributed():
     """Initialize torchrun state and return rank, local rank, and world size."""
@@ -518,7 +520,7 @@ if __name__ == "__main__":
     parser.add_argument("--kl_weight", type=float, default=0.1)
     parser.add_argument("--kl_warmup_epochs", type=int, default=10)
     parser.add_argument("--warmup_epochs", type=int, default=5)
-    parser.add_argument("--output_dir", default="./outputs")
+    parser.add_argument("--output_dir", default=str(BASE_DIR / "outputs"))
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--resume", default=None)
     parser.add_argument("--seed", type=int, default=42)

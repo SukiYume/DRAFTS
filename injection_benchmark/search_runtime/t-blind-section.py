@@ -10,7 +10,6 @@
 
 import argparse
 import importlib.util
-import inspect
 import os
 import sys
 from pathlib import Path
@@ -150,11 +149,13 @@ def main():
     if args.proposal_manifest:
         print(f"[Run] proposal_manifest={args.proposal_manifest}", flush=True)
 
-    all_file_lists  = gate.organize_file_lists(args.data_path, args.beam)
-    distribute_args = [all_file_lists, process_config.gpu_num, args.section]
-    if len(inspect.signature(gate.distribute_file_lists).parameters) >= 4:
-        distribute_args.append(process_config)
-    section_file_lists = gate.distribute_file_lists(*distribute_args)
+    all_file_lists     = gate.organize_file_lists(args.data_path, args.beam)
+    section_file_lists = gate.distribute_file_lists(
+        all_file_lists,
+        process_config.gpu_num,
+        args.section,
+        process_config,
+    )
 
     print(
         f"[Run] total_file_lists={len(all_file_lists)} section_file_lists={len(section_file_lists)}",
@@ -196,11 +197,14 @@ def main():
             f"[Run] processing {identifier}: files={len(fits_list)} save_path={save_path}",
             flush=True,
         )
-        process_kwargs = {"decode_fn": decode_fn}
-        if "n_search_files" in inspect.signature(gate.process_fits_list).parameters:
-            process_kwargs["n_search_files"] = info.get("n_search_files")
         gate.process_fits_list(
-            fits_list, save_path, model, class_model, process_config, **process_kwargs
+            fits_list,
+            save_path,
+            model,
+            class_model,
+            process_config,
+            decode_fn       = decode_fn,
+            n_search_files  = info.get("n_search_files"),
         )
         print(f"[Run] done {identifier}", flush=True)
 

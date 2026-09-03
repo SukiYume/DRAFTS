@@ -9,9 +9,8 @@
     CPU 仅用于                  ：fits 读盘、时间降采样、可视化保存（仅检测命中时）
 
 **本文件 model-agnostic**：检测模型与解码函数全部由 caller（gate.py）传入。
-``decode_fn`` 必须接受 ``(raw_pred, conf_thr, iou_thr)`` 并返回每图
-``(scores_np, boxes_cxcywh_np)`` 列表。当前只保留 CenterNet 检测器，gate.py 会把
-``centers`` 适配成 ``cx, cy, w=0, h=0`` 的统一候选格式。
+``decode_fn`` 接受 ``(raw_pred, conf_thr)``，并为每张图返回
+``(scores_np, centers_xy_np)``。当前 runtime 只使用 CenterNet 中心点检测器。
 
 binary 分类器使用 :mod:`binary_model.build_binary_model`（与训练侧 ``binary_classification/`` 同步）。
 
@@ -60,7 +59,6 @@ class ProcessConfig:
     det_prob: float                = 0.30
     gpu_num: int                   = 5
     time_factor: float             = 8.0
-    det_iou: float                 = 0.5
     class_block_size: int          = 512
     class_time_downsample: int     = 1
     class_threshold: float         = 0.5
@@ -274,7 +272,7 @@ def _validate_config(process_config, block_size, down_file_leng):
         errors.append(f"dm_stride {dm_stride} 必须为正数")
     if block_size % 512 != 0:
         errors.append(f"block_size {block_size} 必须是 512 的整数倍")
-    class_time_downsample = _classifier_time_downsample(process_config)
+    class_time_downsample = int(process_config.class_time_downsample)
     if process_config.class_block_size <= 0:
         errors.append(f"class_block_size {process_config.class_block_size} 必须为正数")
     if class_time_downsample <= 0:
@@ -304,8 +302,8 @@ def _validate_config(process_config, block_size, down_file_leng):
 
 
 def _effective_dm_stride(process_config):
-    """Return configured DM chunk stride, preserving old non-overlap behavior by default."""
-    dm_stride = int(getattr(process_config, "dm_stride", 0) or 0)
+    """返回 DM window 步长；配置为 0 时使用无重叠的 ``dm_span``。"""
+    dm_stride = int(process_config.dm_stride or 0)
     return int(process_config.dm_span) if dm_stride <= 0 else dm_stride
 
 
@@ -325,23 +323,6 @@ def _dm_chunk_starts(process_config):
     return starts
 
 
-def _classifier_time_downsample(process_config):
-    """Return classifier time downsample factor, preserving old behavior by default."""
-    return int(getattr(process_config, "class_time_downsample", 1) or 1)
-
-
-def _maybe_downsample_classifier_time(new_burst, process_config):
-    """Average adjacent classifier time rows before normalization when requested."""
-    factor = _classifier_time_downsample(process_config)
-    if factor <= 1:
-        return new_burst
-    return new_burst.reshape(
-        new_burst.shape[0] // factor,
-        factor,
-        new_burst.shape[1],
-    ).mean(dim=1)
-
-
 def _deduplicate_positive_candidates(positive_candidates, process_config):
     """Suppress duplicate final positives in physical TOA-DM space.
 
@@ -349,8 +330,8 @@ def _deduplicate_positive_candidates(positive_candidates, process_config):
     physical DM has different y pixels in different DM windows.  This keeps the
     highest detector/classifier score candidate within a TOA-DM neighborhood.
     """
-    dm_tol      = float(getattr(process_config, "dedup_dm_tolerance", 0.0) or 0.0)
-    time_tol_ms = float(getattr(process_config, "dedup_time_tolerance_ms", 0.0) or 0.0)
+    dm_tol      = float(process_config.dedup_dm_tolerance or 0.0)
+    time_tol_ms = float(process_config.dedup_time_tolerance_ms or 0.0)
     if dm_tol <= 0.0 or time_tol_ms <= 0.0 or len(positive_candidates) <= 1:
         return positive_candidates
 
@@ -529,9 +510,8 @@ def preprocess_data_gpu(data: torch.Tensor, exp_cut: float = 5.0) -> torch.Tenso
 # ---------------------------------------------------------------------------
 # 6. （检测解码已移出本文件；由 caller 把 decode_fn 传给 process_fits_list）
 # ---------------------------------------------------------------------------
-# 期望 decode_fn 签名 :
-#     decode_fn(raw_pred, conf_thr=..., iou_thr=...) -> list[(scores_np, boxes_cxcywh_np)]
-#   - CenterNet 由 gate.py 用 (centers → 占位 box) 的适配器对齐到同款接口
+# 期望 decode_fn 签名：
+#     decode_fn(raw_pred, conf_thr=...) -> list[(scores_np, centers_xy_np)]
 
 
 # ---------------------------------------------------------------------------
@@ -539,24 +519,14 @@ def preprocess_data_gpu(data: torch.Tensor, exp_cut: float = 5.0) -> torch.Tenso
 # ---------------------------------------------------------------------------
 
 
-def _draw_hollow_cross(vis, center, color, arm=9, gap=3, thickness=1):
-    """中心留空的十字 + 小圆圈；用于 CenterNet 的中心点（无真实框）。"""
-    x, y = int(round(center[0])), int(round(center[1]))
-    cv2.line(vis, (x - arm, y), (x - gap, y), color, thickness)
-    cv2.line(vis, (x + gap, y), (x + arm, y), color, thickness)
-    cv2.line(vis, (x, y - arm), (x, y - gap), color, thickness)
-    cv2.line(vis, (x, y + gap), (x, y + arm), color, thickness)
-    cv2.circle(vis, (x, y), gap, color, thickness)
-
-
-def _draw_detection(vis, cx, cy, w_box, h_box, color=(0, 220, 0)):
-    """画出检测中心；保留矩形参数以兼容旧 manifest 或未来带框检测器。"""
-    if w_box > 0 and h_box > 0:
-        x1, y1 = int(cx - w_box / 2), int(cy - h_box / 2)
-        cv2.rectangle(vis, (x1, y1), (x1 + w_box, y1 + h_box), color, 1)
-        cv2.drawMarker(vis, (int(cx), int(cy)), color, cv2.MARKER_CROSS, 6, 1)
-    else:
-        _draw_hollow_cross(vis, (cx, cy), color)
+def _draw_detection(vis, cx, cy, color=(0, 220, 0)):
+    """在 CenterNet 中心坐标处画空心十字。"""
+    x, y = int(round(cx)), int(round(cy))
+    cv2.line(vis, (x - 9, y), (x - 3, y), color, 1)
+    cv2.line(vis, (x + 3, y), (x + 9, y), color, 1)
+    cv2.line(vis, (x, y - 9), (x, y - 3), color, 1)
+    cv2.line(vis, (x, y + 3), (x, y + 9), color, 1)
+    cv2.circle(vis, (x, y), 3, color, 1)
 
 
 def _save_plot(img_display, new_burst, out_path, dm_start, block_size, process_config):
@@ -624,8 +594,7 @@ def process_fits_list(
     process_config :
         :class:`ProcessConfig` 实例。
     decode_fn :
-        ``decode_fn(raw_pred, conf_thr, iou_thr) -> list[(scores_np, boxes_cxcywh_np)]``。
-        gate.py 把 `decode_centernet_outputs`（返回 centers）适配成统一候选接口。
+        ``decode_fn(raw_pred, conf_thr) -> list[(scores_np, centers_xy_np)]``。
     n_search_files :
         仅对前 ``n_search_files`` 个文件启动检索 block，其余文件只作消色散读取提前量
         （gate.py 按 GPU 切分单个连续观测时用，避免段间重复检索）。``None`` 表示全部检索。
@@ -637,8 +606,8 @@ def process_fits_list(
     input_file_count = len(fits_list)
     block_size       = process_config.block_size
     os.makedirs(save_path, exist_ok=True)
-    candidate_manifest = str(getattr(process_config, "candidate_manifest", "") or "")
-    proposal_manifest  = str(getattr(process_config, "proposal_manifest", "") or "")
+    candidate_manifest = str(process_config.candidate_manifest or "")
+    proposal_manifest  = str(process_config.proposal_manifest or "")
     for manifest_path in (candidate_manifest, proposal_manifest):
         if manifest_path:
             manifest_dir = os.path.dirname(manifest_path)
@@ -687,7 +656,7 @@ def process_fits_list(
     ).to(device)                                                    # (freq_reso,)
     freq_arange_gpu       = torch.arange(freq_reso, device=device)  # (freq_reso,)
     class_time_arange     = torch.arange(process_config.class_block_size, device=device)
-    class_time_downsample = _classifier_time_downsample(process_config)
+    class_time_downsample = int(process_config.class_time_downsample)
 
     # 相邻 block 重叠 comb_file - block_file 个 fits；sliding-window 缓存让每个文件只读一次盘
     # 每文件已在 load_func 内完成偏振平均和时间降采样，二分类仍使用 full-frequency 数据。
@@ -788,23 +757,17 @@ def process_fits_list(
             ).contiguous()  # (N, 1, 512, 512)
             with torch.no_grad():
                 raw_pred = model(detector_input)
-            det_results = decode_fn(
-                raw_pred,
-                conf_thr = process_config.det_prob,
-                iou_thr  = process_config.det_iou,
-            )
+            det_results = decode_fn(raw_pred, conf_thr=process_config.det_prob)
 
             # ── 候选收集 + burst 提取（GPU gather）────────────────────────
             candidates = []
-            for idx, (pred_scores, pred_boxes) in enumerate(det_results):
-                if pred_boxes is None:
+            for idx, (pred_scores, pred_centers) in enumerate(det_results):
+                if pred_centers is None:
                     continue
                 d        = idx % num_dm_chunks  # 该图所在的 DM chunk
                 dm_start = dm_chunk_starts[d]
 
-                for box_idx, (cx, cy, w_box, h_box) in enumerate(
-                    pred_boxes.astype(np.int64)
-                ):
+                for box_idx, (cx, cy) in enumerate(pred_centers.astype(np.int64)):
                     score_val = (
                         float(pred_scores[box_idx]) if pred_scores is not None else 0.0
                     )
@@ -849,9 +812,12 @@ def process_fits_list(
                         -1,
                         down_freq_rate,
                     ).mean(dim=2)  # (class_block_size, freq_reso//down_freq_rate)
-                    new_burst = _maybe_downsample_classifier_time(
-                        new_burst, process_config
-                    )
+                    if class_time_downsample > 1:
+                        new_burst = new_burst.reshape(
+                            new_burst.shape[0] // class_time_downsample,
+                            class_time_downsample,
+                            new_burst.shape[1],
+                        ).mean(dim=1)
                     new_burst = preprocess_data_gpu(new_burst)
 
                     candidates.append(
@@ -864,8 +830,6 @@ def process_fits_list(
                             "idx": idx,
                             "cx": int(cx),
                             "cy": int(cy),
-                            "w_box": int(w_box),
-                            "h_box": int(h_box),
                             "dm_value": float(dm_value),
                             "score": score_val,
                             "dm_start": int(dm_start),
@@ -912,7 +876,7 @@ def process_fits_list(
                         k, d      = divmod(cand["idx"], num_dm_chunks)
                         cls_score = float(cls_score)
                         record = {
-                            "run_label": getattr(process_config, "run_label", ""),
+                            "run_label": process_config.run_label,
                             "proposal_uid": cand["proposal_uid"],
                             "candidate_stage": "detector_proposal",
                             "fits_file": fits_list[i],
@@ -926,8 +890,6 @@ def process_fits_list(
                             "image_index": int(cand["idx"]),
                             "cx": int(cand["cx"]),
                             "cy": int(cand["cy"]),
-                            "w_box": int(cand["w_box"]),
-                            "h_box": int(cand["h_box"]),
                             "detector_score": float(cand["score"]),
                             "centernet_score": float(cand["score"]),
                             "classifier_score": cls_score,
@@ -991,14 +953,7 @@ def process_fits_list(
                         img_batch_flat[cand["idx"]].cpu().numpy() * 255
                     ).astype(np.uint8)
                     img_display = cv2.cvtColor(img_display, cv2.COLOR_GRAY2BGR)
-                    # CenterNet 仅中心点（w=h=0）→ 空心十字；矩形逻辑用于兼容旧格式。
-                    _draw_detection(
-                        img_display,
-                        cand["cx"],
-                        cand["cy"],
-                        cand["w_box"],
-                        cand["h_box"],
-                    )
+                    _draw_detection(img_display, cand["cx"], cand["cy"])
                     plot_path = (
                         f"{save_path}{filename}-TS{j:0>2d}-FS{k}"
                         f"-BX{cand['box_idx']}-DM{cand['dm_value']:.1f}.jpg"
@@ -1014,7 +969,7 @@ def process_fits_list(
 
                 if candidate_manifest:
                     record = {
-                        "run_label": getattr(process_config, "run_label", ""),
+                        "run_label": process_config.run_label,
                         "proposal_uid": cand["proposal_uid"],
                         "fits_file": fits_list[i],
                         "fits_stem": filename,
@@ -1027,8 +982,6 @@ def process_fits_list(
                         "image_index": int(cand["idx"]),
                         "cx": int(cand["cx"]),
                         "cy": int(cand["cy"]),
-                        "w_box": int(cand["w_box"]),
-                        "h_box": int(cand["h_box"]),
                         "detector_score": float(cand["score"]),
                         "centernet_score": float(cand["score"]),
                         "classifier_score": float(cls_score),

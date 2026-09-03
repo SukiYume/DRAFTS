@@ -17,6 +17,8 @@ from centernet_data import get_train_val, normalize_image
 from centernet_eval import decode_centernet_outputs
 from centernet_model import build_centernet_model
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # ---------------------------------------------------------------------------
 # 1. 设备 + 模型加载
 # ---------------------------------------------------------------------------
@@ -150,7 +152,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--weights", type=str, default="")
-    parser.add_argument("--data-path", type=str, default="./Data/")
+    parser.add_argument("--data-path", type=str, default=os.path.join(BASE_DIR, "Data"))
     parser.add_argument("--device", type=str, default="")
     parser.add_argument(
         "--backbone",

@@ -69,7 +69,7 @@ extract_one() {
   if [ -e "$temp_file" ] || [ -e "$partial_file" ]; then
     echo "  [retry] previously failed: $xz_file"
     if [ -e "$temp_file" ]; then
-      # 兼容旧版本：旧脚本会直接把未完成内容写到正式目标文件。
+      # .temp 表示正式目标可能含未完成内容，重试前一并清理。
       rm -f -- "$destination_path"
     fi
     rm -f -- "$partial_file" "$temp_file"

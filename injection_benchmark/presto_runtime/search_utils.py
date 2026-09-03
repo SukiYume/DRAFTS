@@ -12,7 +12,6 @@ from __future__ import annotations
 import csv
 import gzip
 import math
-from collections import Counter
 from pathlib import Path
 
 import matplotlib
@@ -319,56 +318,6 @@ def plot_parameter_cells(
         fig.savefig(out_dir / f"{parameter}_{quant}_recall_precision.png", dpi=300)
         fig.savefig(out_dir / f"{parameter}_{quant}_recall_precision.pdf")
         plt.close(fig)
-
-
-def snr_rows_from_matches(
-    matches: list[dict], false_positives: list[dict]
-) -> list[dict]:
-    """把 source 级 matches 和误报事件压成按 fluence S/N 分箱的折线图输入。"""
-    injected: Counter[tuple[str, int]]       = Counter()
-    detected: Counter[tuple[str, int]]       = Counter()
-    false_positive: Counter[tuple[str, int]] = Counter()
-    for row in matches:
-        quant = str(row.get("quantization", ""))
-        if quant not in QUANTIZATIONS:
-            continue
-        index = bin_index(float(row["fluence_snr"]), FLUENCE_SNR_BINS)
-        if index is None:
-            continue
-        injected[(quant, index)] += 1
-        if bool(row.get("detected")):
-            detected[(quant, index)] += 1
-    for row in false_positives:
-        quant = str(row.get("assigned_quantization", ""))
-        value = row.get("assigned_fluence_snr")
-        if quant not in QUANTIZATIONS or value in ("", None):
-            continue
-        index = bin_index(float(value), FLUENCE_SNR_BINS)
-        if index is not None:
-            false_positive[(quant, index)] += 1
-
-    rows = []
-    for quant in QUANTIZATIONS:
-        for x, (lo, hi) in enumerate(zip(FLUENCE_SNR_BINS[:-1], FLUENCE_SNR_BINS[1:])):
-            total    = injected[(quant, x)]
-            found    = detected[(quant, x)]
-            fp_count = false_positive[(quant, x)]
-            rows.append(
-                {
-                    "quantization": quant,
-                    "fluence_snr_low": lo,
-                    "fluence_snr_high": hi,
-                    "fluence_snr_center": math.sqrt(lo * hi),
-                    "n_injected": total,
-                    "n_detected": found,
-                    "n_false_positive_assigned": fp_count,
-                    "recall": found / total if total else np.nan,
-                    "precision_proxy": (
-                        found / (found + fp_count) if found + fp_count else np.nan
-                    ),
-                }
-            )
-    return rows
 
 
 def plot_snr_rows(

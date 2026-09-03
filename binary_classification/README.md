@@ -2,10 +2,17 @@
 
 本目录训练 DRAFTS 搜索链路的第二阶段模型：CenterNet 给出候选位置后，
 ConvNeXt 二分类器判断候选是否更像真实 burst。默认部署模型是
-`convnext_small`。
+`convnext_small`。目录包含完整的数据读取、模型、训练和推理代码，可以单独复制运行。
 
-第一次使用 DRAFTS 时，先按[仓库根 README](../README.md#快速开始)安装通用依赖。
-本文只说明二分类数据格式、训练、推理和部署。
+## 环境
+
+需要 Python、PyTorch 和本目录列出的依赖：
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+训练数据通过 `--data-path` 指定，默认读取本目录的 `Data/`。训练权重和推理结果也保存在本目录指定的输出位置。
 
 ## 目录职责
 
@@ -45,11 +52,6 @@ False_FRB20240114A.h5
 
 代码先按标签分层切分 train/validation，再仅对训练集过采样，避免同一样本同时出现在
 两侧。训练增强包括 max-mixup、随机拼图、旋转、翻转和合成干扰。
-
-## 运行环境
-
-使用仓库根 README 创建的环境。训练需要与目标 CUDA 平台匹配的 PyTorch 和
-torchvision；数据路径通过 `DATA_PATH` 或 `--data-path` 指定。
 
 ## 训练
 
@@ -119,21 +121,15 @@ python binary_infer.py \
 `--model-name` 必须与 checkpoint 的 backbone 一致。输出表包含样本名、真值、预测类别和
 正类概率，可用于选择阈值或定位误分类样本。
 
-## 部署到 DRAFTS
+## 部署到搜索 runtime
 
-真实观测搜索默认读取：
-
-```text
-search_pipeline/models/binary_best_model_conv_small_ema.pth
-```
-
-注入基准默认读取：
+训练完成后，把选定权重复制到目标搜索 runtime 的 `models/`：
 
 ```text
-injection_benchmark/search_runtime/models/binary_best_model_conv_small_ema.pth
+models/binary_best_model_conv_small_ema.pth
 ```
 
-下载后保持文件名不变，或在对应入口中显式传入 `--classifier-ckpt`；同时保持
+保持文件名不变，或在对应入口中显式传入 `--classifier-ckpt`；同时保持
 `classifier_model_name=convnext_small`。
 
 ## 常见问题

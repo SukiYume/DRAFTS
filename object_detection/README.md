@@ -4,8 +4,17 @@
 候选中心，并将中心坐标转换为候选 TOA 与 DM。当前默认部署模型使用
 CenterNet + ConvNeXt-Tiny。
 
-第一次使用 DRAFTS 时，先按[仓库根 README](../README.md#快速开始)安装通用依赖。
-本文只说明检测器数据格式、训练、验证和部署。
+目录包含完整的数据读取、CenterNet 模型、训练、验证和推理代码，可以单独复制运行。
+
+## 环境
+
+需要 Python、PyTorch 和本目录列出的依赖：
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+训练 H5 通过 `--data-path` 指定，默认读取本目录的 `Data/`。
 
 ## 目录职责
 
@@ -40,13 +49,7 @@ CenterNet 输出中心 heatmap 与亚像素 offset；边框宽高用于生成中
 scene 的 mosaic/crop 帧位于同一集合。训练集按目标数量和小目标存在情况过采样，
 validation 保持原始分布；数据集需要提供 `original_slice`。
 
-训练数据可由 [`../dataset_generation/`](../dataset_generation/) 生成。
-
-## 运行环境
-
-使用仓库根 README 创建的环境。训练需要与目标 CUDA 平台匹配的 PyTorch 和
-torchvision；从仓库根目录运行命令时，训练 H5 可放在任意路径并通过
-`DATA_PATH` 或 `--data-path` 指定。
+训练 H5 可以由任何符合上述字段约定的生成程序提供。
 
 ## 训练
 
@@ -118,21 +121,15 @@ python centernet_infer.py \
 权重和 `--backbone` 必须一致。推理图用于检查中心偏移、漏检和重复候选，完整
 validation 提供汇总指标。评估时，每个预测与容差内尚未使用且距离最近的真值匹配。
 
-## 部署到 DRAFTS
+## 部署到搜索 runtime
 
-真实观测搜索默认读取：
-
-```text
-search_pipeline/models/object_best_model_centernet_conv_tiny_ema_v10.pth
-```
-
-注入基准默认读取：
+训练完成后，把选定权重复制到目标搜索 runtime 的 `models/`：
 
 ```text
-injection_benchmark/search_runtime/models/object_best_model_centernet_conv_tiny_ema_v10.pth
+models/object_best_model_centernet_conv_tiny_ema_v10.pth
 ```
 
-下载后保持文件名不变，或在入口中显式传入 `--detector-ckpt`，并使用
+保持文件名不变，或在入口中显式传入 `--detector-ckpt`，并使用
 `--detector-type centernet_conv_tiny`。
 
 ## 常见问题

@@ -100,13 +100,6 @@ def main():
     print(f"[Run] detector={args.detector_type} ckpt={detector_ckpt}", flush=True)
     print(f"[Run] classifier=convnext_small ckpt={classifier_ckpt}", flush=True)
 
-    model, decode_fn = gate.load_detector(args.detector_type, detector_ckpt)
-    class_model = gate.load_binary_classifier(
-        classifier_ckpt,
-        model_type = "ConvNeXtNet",
-        model_name = "convnext_small",
-    )
-
     all_file_lists     = gate.organize_file_lists(args.data_path, args.beam)
     section_file_lists = gate.distribute_file_lists(
         all_file_lists,
@@ -138,6 +131,13 @@ def main():
                 flush=True,
             )
         return
+
+    model, decode_fn = gate.load_detector(args.detector_type, detector_ckpt)
+    class_model = gate.load_binary_classifier(
+        classifier_ckpt,
+        model_type = "ConvNeXtNet",
+        model_name = "convnext_small",
+    )
 
     for identifier, fits_list, info in section_file_lists:
         save_path = (

@@ -19,6 +19,9 @@ import time
 from pathlib import Path
 
 
+HERE = Path(__file__).resolve().parent
+
+
 def write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -30,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Launch DRAFTS sections for an injection run."
     )
-    parser.add_argument("--runtime-dir", type=Path, default=Path("search_runtime"))
+    parser.add_argument("--runtime-dir", type=Path, default=HERE / "search_runtime")
     parser.add_argument("--data-path", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--run-label", type=str, required=True)

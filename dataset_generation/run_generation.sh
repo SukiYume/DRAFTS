@@ -3,13 +3,13 @@ set -euo pipefail
 
 # 全部路径以脚本所在目录为根。复制 dataset_generation 目录即可运行：
 #   dataset_generation/ 下需有：本脚本、generate_dataset.py、merge_shards.py、
-#                    inspect_dataset.py、simulation_utils.py、d-center-binary-core.py、
+#                    inspect_dataset.py、simulation_utils.py、dedispersion.py、
 #                    rawdata/（背景 FITS）。中间产物和输出写在 dataset_generation 下。
 # 需要时可用环境变量覆盖任意一项（如 GEN_ROOT=/somewhere RAW_DIR=... PY=python3）。
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GEN_ROOT="${GEN_ROOT:-${SCRIPT_DIR}}"
 RAW_DIR="${RAW_DIR:-${GEN_ROOT}/rawdata}"
-# simulation_utils.py、d-center-binary-core.py 固定与生成脚本同目录，不再传 --injection-dir / --runtime-dir。
+# simulation_utils.py、dedispersion.py 与生成脚本位于同一目录；命令只配置数据和输出路径。
 BASE_DIR="${GEN_ROOT}/shards_50000"
 FINAL_H5="${GEN_ROOT}/centernet_dataset_sim50000_max3.h5"
 PY="${PY:-python}"                                   # 用当前环境的 python；可用 PY=... 覆盖

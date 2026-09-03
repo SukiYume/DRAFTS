@@ -15,29 +15,28 @@ streamed into the output H5.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import math
-import re
-import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
 
 import h5py
 import numpy as np
+import torch
 from astropy.io import fits
+
+import dedispersion
+import simulation_utils as simulation
 
 try:
     from scipy import ndimage as ndi
-except (
-    ImportError
-):  # Remote generation can still run with the centered physical fallback.
+except ImportError:  # 形态学不可用时使用真值中心的物理框。
     ndi = None
 
 
 # 默认路径全部相对脚本所在目录（dataset_generation）。
-# 需要的代码文件（simulation_utils.py、d-center-binary-core.py）和数据（rawdata/、channel_std 缓存）
+# 需要的代码文件（simulation_utils.py、dedispersion.py）和数据（rawdata/、channel_std 缓存）
 # 都放在脚本同目录或其子目录下即可。命令行仍可覆盖。
 _HERE = Path(__file__).resolve().parent  # 自包含：代码 + 数据都在脚本同目录或其子目录
 DEFAULT_RAWDATA_DIR = (
@@ -45,7 +44,7 @@ DEFAULT_RAWDATA_DIR = (
 )  # 原始 FAST 背景 FITS（可用 --rawdata-dir 覆盖）
 DEFAULT_OUTPUT                = _HERE / "multifit_tdm_200k.h5"
 DEFAULT_WORK_DIR              = _HERE  # std 缓存等中间产物
-# simulation_utils.py、d-center-binary-core.py 固定在脚本同目录 _HERE，不再单独配置 injection/runtime 路径。
+# simulation_utils.py、dedispersion.py 固定在脚本同目录，不单独配置代码路径。
 DEFAULT_COUNT                 = 200_000  # h5 images = unique_signals(50000) * crops_per_signal(4)
 DEFAULT_SIGNALS_PER_BATCH     = 500
 DEFAULT_SIGNALS_PER_SCENE     = 3
@@ -55,15 +54,8 @@ DEFAULT_FILE_FIRST            = 11
 DEFAULT_FILE_LAST             = 275
 DEFAULT_SEED                  = 20260614
 
-# Signal distributions.  Deliberately broader than the paper injection run:
-# this dataset trains detector robustness (wide DM/time/SNR generalization,
-# many weak signals), not survey completeness.
-#   - DM lower bound dropped 100 -> 5 so low-DM bowties actually populate the
-#     small (512) DM-span crops; without this DM<100 was background-only.
-#   - SNR floor 2 -> 1.5 and ceiling 100 -> 120 (log-uniform) to push more weak
-#     signals.  Note: large DM/time crop spans further dilute the *relative* S/N
-#     via area-resample, so "low DM x large span x low SNR" weak cases arise
-#     automatically without coupling SNR to the (per-crop) span.
+# 训练分布覆盖低 DM、弱信号、宽脉冲和宽散射尾，用于提高 detector 在多种
+# DM/time crop 尺度下的鲁棒性。大 crop 的 area-resample 会自然降低相对 S/N。
 DM_RANGE_PC_CM3              = (5.0, 4000.0)
 SNR_RANGE                    = (1.5, 120.0)
 WIDTH_FWHM_MS_RANGE          = (0.5, 50.0)
@@ -169,16 +161,8 @@ class ScenePlan:
 
 
 # ---------------------------------------------------------------------------
-# 基础工具：文件编号解析、JSON 写出、动态 import 注入/runtime 模块
+# 基础工具：JSON 写出
 # ---------------------------------------------------------------------------
-def file_number(path_or_stem: str) -> int:
-    """从形如 ``*_Mxx_0123`` 的文件名里解析出 4 位 FITS 编号（如 0123 -> 123）。"""
-    match = re.search(r"[-_]M\d+_(\d{4})$", Path(path_or_stem).stem)
-    if not match:
-        raise ValueError(f"Cannot parse Mxx file number from {path_or_stem}")
-    return int(match.group(1))
-
-
 def write_json(path: Path, payload: dict) -> None:
     """缩进 + key 排序写出单个 JSON（用于 config / inspect 汇总）。"""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -193,33 +177,6 @@ def write_jsonl(path: Path, rows: Iterable[dict]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
-
-
-def load_simulation_utils():
-    """导入合并后的支撑库 simulation_utils，返回 (inj, model)——两者指向同一模块。
-
-    simulation_utils 同时包含 FRB 模型（model 用：gaussian/scattered/DM_DELAY）和 FAST 背景工具
-    （inj 用：list_background_fits/read_metadata/estimate_global_channel_std 等），所以
-    返回两份同一引用即可，主流程里 ``inj.``/``model.`` 的写法保持不变。
-    """
-    sys.path.insert(0, str(_HERE))
-    import simulation_utils  # noqa: PLC0415
-
-    return simulation_utils, simulation_utils
-
-
-def load_runtime_core():
-    """从脚本同目录动态加载 DRAFTS runtime 核心；文件名含连字符无法常规 import 故按路径加载。"""
-    core_path = _HERE / "d-center-binary-core.py"
-    spec = importlib.util.spec_from_file_location(
-        "drafts_d_center_binary_core", core_path
-    )
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot import runtime core from {core_path}")
-    module                 = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 # ---------------------------------------------------------------------------
@@ -343,11 +300,6 @@ def crop_variant(
     return SignalPlan(**values)
 
 
-def scene_time_reso_seconds(scene_cfg: SceneConfig) -> float:
-    """scene guard 用的保守下采样时间分辨率：FAST search-mode TBIN≈49.152us × 下采样率。"""
-    return 49.152e-6 * scene_cfg.down_time_rate
-
-
 def args_guard_down(
     width_ms: float, scat_high_ms: float, scene_cfg: SceneConfig
 ) -> int:
@@ -357,9 +309,8 @@ def args_guard_down(
     用保守 TBIN 估计；真实 time_reso 由 rebuild_signal_timing 再夹一次。
     """
     approx_ms = MODEL_SUPPORT_SIGMA * (width_ms / 2.355 + 2.0 * scat_high_ms)
-    return (
-        int(math.ceil((approx_ms / 1000.0) / scene_time_reso_seconds(scene_cfg))) + 512
-    )
+    approx_time_reso = 49.152e-6 * scene_cfg.down_time_rate
+    return int(math.ceil((approx_ms / 1000.0) / approx_time_reso)) + 512
 
 
 def sample_signal_params(
@@ -369,7 +320,6 @@ def sample_signal_params(
     scene_cfg: SceneConfig,
     freq_min: float,
     freq_max: float,
-    model,
     run_label: str,
 ) -> SignalPlan:
     """采样一个信号的全部物理参数（DM/宽度/带宽/SNR/散射/中心频率/到达时间）+ 首个 crop 视角。
@@ -404,7 +354,7 @@ def sample_signal_params(
     toa_raw  = int(round(toa_down * scene_cfg.down_time_rate))
 
     freqs                = np.linspace(freq_min, freq_max, 4096, dtype=np.float64)
-    envelope             = model.gaussian_profile(freqs, center_freq, sigma_freq)
+    envelope             = simulation.gaussian_profile(freqs, center_freq, sigma_freq)
     effective_channels   = max(1.0, float(np.sum(envelope > 0.5)))
     per_channel_peak_snr = snr / math.sqrt(effective_channels)
     crop_fields = sample_crop_fields(
@@ -474,7 +424,6 @@ def build_scene_plans(
     meta: dict,
     freqs_mhz: np.ndarray,
     scene_cfg: SceneConfig,
-    model,
 ) -> list[ScenePlan]:
     """规划全部 scene：每个 scene 随机取一段背景、采样 signals_per_scene 个信号，
     每个信号派生 crops_per_signal 个 crop（每 crop 一张图），直到凑够 args.count 张图。
@@ -516,7 +465,6 @@ def build_scene_plans(
                 scene_cfg,
                 freq_min,
                 freq_max,
-                model,
                 args.run_label,
             )
             sig = rebuild_signal_timing(sig, scene_cfg, meta)
@@ -540,7 +488,7 @@ def build_scene_plans(
                 batch_index       = batch_index,
                 scene_index       = len(scenes),
                 start_global_raw  = start_global,
-                start_file_number = file_number(files[start_file].stem),
+                start_file_number = simulation.file_number(files[start_file].stem),
                 input_raw_samples = input_raw,
                 signals           = tuple(signals),
                 crops             = tuple(crops),
@@ -554,7 +502,7 @@ def build_scene_plans(
 # 真实 FAST 背景读取、raw 域注入、时间下采样
 # ---------------------------------------------------------------------------
 def estimate_channel_std(
-    inj, files: list[Path], meta: dict, args: argparse.Namespace
+    files: list[Path], meta: dict, args: argparse.Namespace
 ) -> np.ndarray:
     """估计每通道背景噪声 std（注入幅度的标度）；优先读缓存，没有就从少量文件估计并缓存。"""
     cache = args.work_dir / "channel_std_raw8.npy"
@@ -568,7 +516,7 @@ def estimate_channel_std(
             )
         return arr.astype(np.float32)
     sample_files = files if args.std_file_limit <= 0 else files[: args.std_file_limit]
-    std = inj.estimate_global_channel_std(
+    std = simulation.estimate_global_channel_std(
         sample_files,
         meta,
         max_samples_per_file = args.std_samples_per_file,
@@ -613,7 +561,6 @@ def load_downsampled_stokes_window(
     signals: tuple[SignalPlan, ...],
     freqs_mhz: np.ndarray,
     chan_std: np.ndarray,
-    model,
     chunk_down: int,
 ) -> np.ndarray:
     """分块读 raw 背景 → 块内逐信号注入 → 每 down_time_rate 个 raw 采样求平均，
@@ -630,7 +577,7 @@ def load_downsampled_stokes_window(
         chunk_local_raw = down_start * scene_cfg.down_time_rate
         for signal in signals:
             inject_signal_raw_stokes(
-                raw, chunk_local_raw, signal, freqs_mhz, chan_std, meta, model
+                raw, chunk_local_raw, signal, freqs_mhz, chan_std, meta
             )
         out[down_start:down_stop] = raw.reshape(
             down_stop - down_start,
@@ -660,7 +607,6 @@ def inject_signal_raw_stokes(
     freqs_mhz: np.ndarray,
     chan_std: np.ndarray,
     meta: dict,
-    model,
 ) -> None:
     """把一个 FRB 信号原位加进 raw time-freq 块（就地修改 raw_stokes）。
 
@@ -678,7 +624,9 @@ def inject_signal_raw_stokes(
     support = support_samples_raw(signal, freqs_mhz, meta)
 
     all_delays = (
-        model.DM_DELAY_SECONDS * signal.dm_pc_cm3 * (freqs_mhz**-2 - ref_freq**-2)
+        simulation.DM_DELAY_SECONDS
+        * signal.dm_pc_cm3
+        * (freqs_mhz**-2 - ref_freq**-2)
     )
     all_centers = signal.toa_raw + all_delays / meta["time_reso_seconds"]
     local_start = max(
@@ -698,12 +646,16 @@ def inject_signal_raw_stokes(
     for chan_start in range(0, nchan, CHANNEL_CHUNK):
         chan_stop = min(chan_start + CHANNEL_CHUNK, nchan)
         freqs     = freqs_mhz[chan_start:chan_stop]
-        envelope = model.gaussian_profile(
+        envelope = simulation.gaussian_profile(
             freqs, signal.center_freq_mhz, signal.sigma_freq_mhz
         ).astype(np.float32)
         if float(np.nanmax(envelope)) <= 1e-5:
             continue
-        delays  = model.DM_DELAY_SECONDS * signal.dm_pc_cm3 * (freqs**-2 - ref_freq**-2)
+        delays  = (
+            simulation.DM_DELAY_SECONDS
+            * signal.dm_pc_cm3
+            * (freqs**-2 - ref_freq**-2)
+        )
         centers = signal.toa_raw + delays / meta["time_reso_seconds"]
         chunk_start = max(
             local_start,
@@ -723,7 +675,7 @@ def inject_signal_raw_stokes(
             chunk_start, chunk_stop, dtype=np.float64
         )
         tau_by_freq = tau_ref_bins * (freqs / ref_freq) ** (-TAU_FREQ_INDEX)
-        pulse = model.scattered_gaussian_profile(
+        pulse = simulation.scattered_gaussian_profile(
             times, centers, sigma_bins, tau_by_freq
         ).astype(np.float32)
         delta = signal.per_channel_peak_snr * envelope[:, None] * pulse
@@ -738,49 +690,51 @@ def inject_signal_raw_stokes(
 # ---------------------------------------------------------------------------
 # 频率下采样 + 消色散准备
 # ---------------------------------------------------------------------------
-def make_process_config(core, time_factor: float):
-    """构造 runtime 的消色散 ProcessConfig，固定到 0-4096 DM canvas。"""
-    return core.ProcessConfig(
-        dm_range     = CANVAS_DM_RANGE,
-        dm_scale     = CANVAS_DM_SCALE,
-        dm_offset    = CANVAS_DM_OFFSET,
-        dm_threshold = 90.0,
-        block_size   = 4096,
-        dm_span      = 1024,
-        dm_stride    = 512,
-        time_factor  = time_factor,
-        save_npy     = False,
-        save_plot    = False,
+def build_scene_config(
+    meta: dict, freqs_mhz: np.ndarray, args: argparse.Namespace
+) -> SceneConfig:
+    """由观测元信息计算下采样率、最高 DM 延迟和 scene 输入长度。"""
+    if meta["nchan"] < 512 or meta["nchan"] % 512 != 0:
+        raise ValueError(
+            f"nchan {meta['nchan']} must be a positive multiple of 512"
+        )
+    down_freq_rate = meta["nchan"] // 512
+    down_time_rate = int(
+        (49.152 * args.time_factor / 1e6) / meta["time_reso_seconds"]
     )
-
-
-def build_scene_config(core, first_file: Path, args: argparse.Namespace) -> SceneConfig:
-    """读首文件元信息，算出最高 DM 的色散位移，推导输入窗口长度，组装 SceneConfig。"""
-    core.get_obparams(str(first_file), args.time_factor)
+    if down_time_rate <= 0:
+        raise ValueError(
+            f"time_factor {args.time_factor} produces invalid down_time_rate "
+            f"{down_time_rate}"
+        )
     freq_down = np.mean(
-        core.freq.reshape(core.freq_reso // core.down_freq_rate, core.down_freq_rate),
+        freqs_mhz.reshape(meta["nchan"] // down_freq_rate, down_freq_rate),
         axis=1,
     ).astype(np.float32)
     dm_max     = CANVAS_DM_OFFSET + CANVAS_DM_SCALE * (CANVAS_DM_RANGE - 1)
     delay      = 4.15e3 * dm_max * (freq_down.min() ** -2 - freq_down.max() ** -2)
-    max_shift  = int(math.ceil(delay / (core.time_reso * core.down_time_rate)))
+    max_shift  = int(
+        math.ceil(delay / (meta["time_reso_seconds"] * down_time_rate))
+    )
     input_down = int(args.scene_output_down + max_shift + args.tail_guard_down)
     return SceneConfig(
         scene_output_down = int(args.scene_output_down),
         input_down        = input_down,
         max_dm_shift_down = max_shift,
-        down_time_rate    = int(core.down_time_rate),
-        down_freq_rate    = int(core.down_freq_rate),
+        down_time_rate    = down_time_rate,
+        down_freq_rate    = down_freq_rate,
         time_factor       = float(args.time_factor),
     )
 
 
-def stokes_to_freq_down(stokes: np.ndarray, core, scene_cfg: SceneConfig) -> np.ndarray:
+def stokes_to_freq_down(
+    stokes: np.ndarray, meta: dict, scene_cfg: SceneConfig
+) -> np.ndarray:
     """频率方向每 down_freq_rate 个通道求平均：[input_down, nchan] -> [input_down, nchan/rate]。"""
     return np.mean(
         stokes.reshape(
             scene_cfg.input_down,
-            core.freq_reso // scene_cfg.down_freq_rate,
+            meta["nchan"] // scene_cfg.down_freq_rate,
             scene_cfg.down_freq_rate,
         ),
         axis=2,
@@ -788,16 +742,21 @@ def stokes_to_freq_down(stokes: np.ndarray, core, scene_cfg: SceneConfig) -> np.
 
 
 def prepare_dedispersion(
-    core, first_file: Path, args: argparse.Namespace, scene_cfg: SceneConfig
+    freqs_mhz: np.ndarray,
+    meta: dict,
+    scene_cfg: SceneConfig,
 ):
-    """预建 runtime 的消色散缓存（DM 试探表等），整个运行复用一次。"""
-    pc = make_process_config(core, args.time_factor)
-    core.get_obparams(str(first_file), args.time_factor)
-    return core._build_dedispersion_cache(
-        CANVAS_DM_RANGE,
-        scene_cfg.scene_output_down,
-        scene_cfg.input_down,
-        pc,
+    """预建生成任务共用的 DM 时移表和 GPU 缓冲。"""
+    return dedispersion.build_cache(
+        frequency_mhz  = freqs_mhz,
+        time_reso      = meta["time_reso_seconds"],
+        down_freq_rate = scene_cfg.down_freq_rate,
+        down_time_rate = scene_cfg.down_time_rate,
+        dm_count       = CANVAS_DM_RANGE,
+        output_width   = scene_cfg.scene_output_down,
+        input_width    = scene_cfg.input_down,
+        dm_scale       = CANVAS_DM_SCALE,
+        dm_offset      = CANVAS_DM_OFFSET,
     )
 
 
@@ -1171,7 +1130,6 @@ def annotation_for_signal(
 
 
 def crop_scene_images(
-    core,
     dm_time_gpu,
     crop_plans: tuple[SignalPlan, ...],
     injected_signals: tuple[SignalPlan, ...],
@@ -1188,7 +1146,6 @@ def crop_scene_images(
 
     返回 (images[N,512,512], 每图的框列表)。
     """
-    torch = core.torch
     crops = []
     for signal in crop_plans:
         slab = dm_time_gpu[
@@ -1202,7 +1159,7 @@ def crop_scene_images(
         ]
         crops.append(crop)
     batch  = torch.stack(crops, dim=0)
-    batch  = core._normalize_batch_gpu(batch)
+    batch  = dedispersion.normalize_batch(batch)
     images = batch.detach().float().cpu().numpy().astype(np.float32)
 
     annotations_by_image: list[list[list[float]]] = []
@@ -1388,17 +1345,17 @@ def main() -> None:
     if args.signals_per_scene > args.max_objects_per_image:
         raise SystemExit("--signals-per-scene cannot exceed --max-objects-per-image")
 
-    inj, model = load_simulation_utils()
-    core       = load_runtime_core()
-    files      = inj.list_background_fits(args.rawdata_dir, args.file_first, args.file_last)
-    meta       = inj.read_metadata(files[0])
+    files = simulation.list_background_fits(
+        args.rawdata_dir, args.file_first, args.file_last
+    )
+    meta = simulation.read_metadata(files[0])
     if args.validate_headers:
-        inj.validate_consistent_headers(files, meta)
-    freqs_mhz           = inj.frequency_axis(meta)
+        simulation.validate_consistent_headers(files, meta)
+    freqs_mhz           = simulation.frequency_axis(meta)
     freq_min            = float(np.nanmin(freqs_mhz))
     freq_max            = float(np.nanmax(freqs_mhz))
-    scene_cfg           = build_scene_config(core, files[0], args)
-    scenes              = build_scene_plans(args, files, meta, freqs_mhz, scene_cfg, model)
+    scene_cfg           = build_scene_config(meta, freqs_mhz, args)
+    scenes              = build_scene_plans(args, files, meta, freqs_mhz, scene_cfg)
     unique_signal_count = int(sum(len(scene.signals) for scene in scenes))
 
     config = {
@@ -1477,8 +1434,8 @@ def main() -> None:
         )
         return
 
-    chan_std = estimate_channel_std(inj, files, meta, args)
-    dd_cache = prepare_dedispersion(core, files[0], args, scene_cfg)
+    chan_std = estimate_channel_std(files, meta, args)
+    dd_cache = prepare_dedispersion(freqs_mhz, meta, scene_cfg)
     annotation_rows: list[list[float]] = []
     image_idx = 0
     with create_h5(args.output, args.count, args.gzip_level) as h5:
@@ -1494,18 +1451,14 @@ def main() -> None:
                 scene.signals,
                 freqs_mhz,
                 chan_std,
-                model,
                 chunk_down=args.raw_chunk_down,
             )
-            raw_data_down = stokes_to_freq_down(stokes, core, scene_cfg)
+            raw_data_down = stokes_to_freq_down(stokes, meta, scene_cfg)
             raw_data_down = raw_data_down / (
                 np.mean(raw_data_down, axis=0) + np.float32(1e-8)
             )
-            dm_time = core.d_dm_time_g(
-                raw_data_down, CANVAS_DM_RANGE, scene_cfg.scene_output_down, dd_cache
-            )
+            dm_time = dedispersion.dedisperse(raw_data_down, dd_cache)
             images, boxes_by_image = crop_scene_images(
-                core,
                 dm_time,
                 scene.crops,
                 scene.signals,

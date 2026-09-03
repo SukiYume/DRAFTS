@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Edit this compact configuration block before launching a run.
-H5_PATH="./FRB20220912A_PrepData.h5"
+H5_PATH="${H5_PATH:-${SCRIPT_DIR}/FRB20220912A_PrepData.h5}"
 DOWN_TIMES=(8 16 32 64 128 256)
 MODEL="vae"                 # ae or vae
 ENCODER="convnext"         # convnext or resnet18
@@ -14,7 +16,7 @@ CUDA_VISIBLE_DEVICES="0,1,2,3"
 EPOCHS=50
 BATCH_SIZE=32
 LEARNING_RATE=1e-4
-OUTPUT_DIR="./outputs"
+OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}/outputs}"
 NUM_WORKERS=8
 WARMUP_EPOCHS=2
 
@@ -44,7 +46,7 @@ if (( NUM_GPUS == 0 )); then
 fi
 
 TRAIN_ARGS=(
-    train_ddp.py
+    "${SCRIPT_DIR}/train_ddp.py"
     --h5_path "$H5_PATH"
     --down_times "${DOWN_TIMES[@]}"
     --model "$MODEL"

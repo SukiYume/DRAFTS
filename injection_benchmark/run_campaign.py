@@ -281,9 +281,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--search-file-last", type=int, default=279)
     parser.add_argument("--inject-file-first", type=int, default=12)
     parser.add_argument("--inject-file-last", type=int, default=275)
-    # 兼容旧脚本参数；如果提供，会覆盖 search-file-*。
-    parser.add_argument("--file-first", type=int, default=None)
-    parser.add_argument("--file-last", type=int, default=None)
     parser.add_argument("--seed", type=int, default=20260626)
     parser.add_argument("--python", type=str, default=DEFAULT_PYTHON)
     parser.add_argument("--inject-workers", type=int, default=8)
@@ -373,10 +370,6 @@ def parse_args() -> argparse.Namespace:
 
 
 def normalize_args(args: argparse.Namespace) -> None:
-    if args.file_first is not None:
-        args.search_file_first = args.file_first
-    if args.file_last is not None:
-        args.search_file_last = args.file_last
     if args.batches < 1:
         raise SystemExit("--batches must be >= 1")
     if args.generate_only and args.search_only:

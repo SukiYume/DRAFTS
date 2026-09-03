@@ -3,9 +3,7 @@
 本目录是一套可以拷到服务器独立运行的 FRB 单脉冲搜索 runtime。运行时只需要 Python/CUDA 环境、FAST FITS 数据、模型权重和输出目录。
 
 当前默认搜索链路是 **CenterNet ConvNeXt-Tiny detector v10 + ConvNeXt-Small binary classifier**。
-
-第一次使用 DRAFTS 时，先按[仓库根 README](../README.md#快速开始)完成环境安装和
-默认模型下载；本文只说明真实观测搜索 runtime 的输入、参数、输出和排错。
+所有搜索入口、模型定义、调度脚本、fixed-DM 工具和依赖清单均位于本目录内。模型权重放入本目录的 `models/`。
 
 ## 入口选择
 

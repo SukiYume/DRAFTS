@@ -1,9 +1,16 @@
 # DRAFTS CenterNet 训练 H5 生成
 
-本目录把真实 FAST 背景数据和模拟 FRB 注入结合起来，生成 `object_detection/` 可直接读取的 CenterNet 训练 H5。当前主线是 multifitting 风格模拟信号、0-4096 DM 画布、512 x 512 time-DM 图像和最多 3 个目标框。
+本目录把真实 FAST 背景数据和模拟 FRB 注入结合起来，生成 CenterNet 训练 H5。当前主线是 multifitting 风格模拟信号、0-4096 DM 画布、512 x 512 time-DM 图像和最多 3 个目标框。目录包含注入模型、FAST 读取工具和专用 GPU 消色散模块，可以单独复制运行。
 
-第一次使用 DRAFTS 时，先按[仓库根 README](../README.md#快速开始)安装 CUDA、
-PyTorch、CuPy 和通用依赖。本文只说明训练数据的信号模型、采样分布、生成和检查。
+## 环境
+
+先安装本目录的 Python 依赖：
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+CuPy 需要与运行节点的 CUDA 版本匹配，例如 CUDA 12 环境使用 `cupy-cuda12x`。背景 FITS 通过 `--rawdata-dir` 或 `RAW_DIR` 指定，生成结果可以交给任意兼容当前 H5 数据格式的 CenterNet 训练程序。
 
 ## 文件职责
 
@@ -14,7 +21,7 @@ PyTorch、CuPy 和通用依赖。本文只说明训练数据的信号模型、�
 | `merge_shards.py` | 合并 shard H5，并同步生成合并后的 annotation/config/metadata/inspect 文件。 |
 | `inspect_dataset.py` | 快速检查 H5 内容，输出 JSON 摘要和 contact sheet。 |
 | `simulation_utils.py` | FRB 动态谱基本函数和 FAST 背景处理工具。物理参数采样在 `generate_dataset.py` 中完成。 |
-| `d-center-binary-core.py` | 生成器复用的 GPU 消色散核心。 |
+| `dedispersion.py` | 生成器使用的 GPU 消色散和 detector 图归一化。 |
 | `rawdata/` | 背景 FITS 位置。大数据不随仓库保存，运行时用目录、软链接或 `RAW_DIR` 指定。 |
 | `shards_50000/` | 批量生成产物目录。属于可重算产物，不作为源码维护。 |
 
@@ -82,7 +89,7 @@ PyTorch、CuPy 和通用依赖。本文只说明训练数据的信号模型、�
 ## 生成完整训练集
 
 ```bash
-cd DRAFTS/dataset_generation
+cd /path/to/dataset_generation
 RAW_DIR=/path/to/rawdata \
 PY="$(command -v python)" \
 SHARDS_PER_WAVE=4 \
@@ -105,16 +112,15 @@ SHARDS_PER_WAVE=4 \
 | `centernet_dataset_sim50000_max3.merge.log` | shard 合并日志。 |
 | `shards_50000/shard_*.h5` / `shard_*.log` | 合并前的 shard 数据和各 shard 运行日志。 |
 
-生成完成后，把 H5 复制到 `../object_detection/Data/`，再进入
-`../object_detection/` 训练检测器。训练代码读取 H5 内的 `annotations`，外部
-`_annotations.json` 用于独立检查。
+生成完成后，把 H5 通过目标训练程序的 `--data-path` 传入。训练代码读取 H5 内的
+`annotations`，外部 `_annotations.json` 用于独立检查。
 
 ## 小规模检查
 
 先用 dry-run 确认参数、输入文件和输出路径：
 
 ```bash
-cd DRAFTS/dataset_generation
+cd /path/to/dataset_generation
 python generate_dataset.py \
   --rawdata-dir ./rawdata \
   --output ./test_multifit.h5 \
@@ -159,4 +165,4 @@ JSON/JSONL 中；复查训练数据时优先结合 metadata 和 contact sheet。
 ## 运行注意事项
 
 - 重新跑同一输出目录前先确认旧 shard 是否要保留，避免新旧 shard 混合。
-- 如果只改训练策略，优先在 `../object_detection/` 改；本目录只负责生成检测器训练数据。
+- 本目录负责生成检测器训练数据；模型结构和训练策略由使用该 H5 的训练程序管理。

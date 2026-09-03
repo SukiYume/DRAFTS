@@ -31,6 +31,8 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 from ultralytics.utils.torch_utils import ModelEMA
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # ---------------------------------------------------------------------------
 # 1. 通用辅助：CLI bool 解析 / 随机种子 / 分布式 / 设备
 # ---------------------------------------------------------------------------
@@ -104,7 +106,7 @@ def default_log_dir(model_type, model_name, fix_size):
     """根据模型 / 训练规模给一个有提示性的默认 log dir。"""
     prefix = "logs_spp" if model_type == "SPPConvNeXt" else "logs_convnext"
     suffix = "fix" if fix_size else "ran"
-    return f"./{prefix}_{model_name}_{suffix}/"
+    return os.path.join(BASE_DIR, f"{prefix}_{model_name}_{suffix}")
 
 
 # ---------------------------------------------------------------------------
@@ -558,7 +560,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # paths
-    parser.add_argument("--data-path", type=str, default="./Data/")
+    parser.add_argument("--data-path", type=str, default=os.path.join(BASE_DIR, "Data"))
     parser.add_argument("--log-dir", type=str, default="")
     parser.add_argument("--resume", type=str, default="")
     parser.add_argument(

@@ -16,6 +16,8 @@ from binary_model import build_binary_model
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # ---------------------------------------------------------------------------
 # 1. 设备 + 权重加载
 # ---------------------------------------------------------------------------
@@ -119,7 +121,7 @@ if __name__ == "__main__":
 
     # paths
     parser.add_argument("--weights", type=str, required=True)
-    parser.add_argument("--data-path", type=str, default="./Data/")
+    parser.add_argument("--data-path", type=str, default=os.path.join(BASE_DIR, "Data"))
     parser.add_argument(
         "--output",
         type    = str,

@@ -19,7 +19,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -42,15 +42,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class ProcessConfig:
     """算法 / 运行时超参数。"""
 
-    DM: float                           = 273.5  # 用来做色散修正的 DM 值（pc cm^-3）
-    prob: float                         = 0.6    # 分类器判定阈值
-    block_size: int                     = 512    # 每张 512×512 图对应的时间样本数（降采样后）
-    section_num: int                    = 32     # 逻辑 section 总数
-    down_sampling_rate_list: np.ndarray = None   # 多尺度搜索（不同时间分辨率）
-
-    def __post_init__(self):
-        if self.down_sampling_rate_list is None:
-            self.down_sampling_rate_list = np.array([8])
+    DM: float                              = 273.5  # 用来做色散修正的 DM 值（pc cm^-3）
+    prob: float                            = 0.6    # 分类器判定阈值
+    block_size: int                        = 512    # 每张 512×512 图对应的时间样本数（降采样后）
+    section_num: int                       = 32     # 逻辑 section 总数
+    down_sampling_rate_list: Sequence[int] = (8,)  # 多尺度搜索（不同时间分辨率）
 
 
 # ---------------------------------------------------------------------------
@@ -85,17 +81,8 @@ def load_fits_file(file_name, reverse_flag=False, down_time_rate=1):
 def load_2bit_fits_file(file_name, reverse_flag=False, down_time_rate=1):
     """读取 2-bit 压缩 fits 文件，输出 (time, freq) 二维数据。"""
     with fits.open(file_name) as f:
-        h = f[1].header
-        try:
-            data = f[1].data["DATA"]
-        except Exception:
-            # 缺 DATA 字段时用占位随机数据，便于流水线 sanity-test
-            data = np.random.randint(
-                0,
-                3,
-                (h["NAXIS2"], h["NSBLK"] // 4, h["NPOL"], h["NCHAN"], 1),
-                dtype=np.uint8,
-            )
+        h    = f[1].header
+        data = f[1].data["DATA"]
     data = np.unpackbits(data.reshape(h["NAXIS2"], -1), axis=1).reshape(
         h["NAXIS2"], -1, 2
     )
@@ -117,8 +104,7 @@ def preprocess_data(data, exp_cut=5):
     data /= np.mean(data, axis=0)
     vmin, vmax = np.nanpercentile(data, [exp_cut, 100 - exp_cut])
     data = np.clip(data, vmin, vmax)
-    data = (data - data.min()) / (data.max() - data.min() + 1e-8)
-    return data
+    return (data - data.min()) / (data.max() - data.min() + 1e-8)
 
 
 # ---------------------------------------------------------------------------
@@ -204,10 +190,9 @@ def process_fits_list(
         freq      = f[1].data["DAT_FREQ"][0, :].astype(np.float64)
 
     # 频率轴方向（如低频在右，需要反转）
-    reverse_flag = False
-    if freq[0] > freq[-1]:
-        reverse_flag = True
-        freq         = freq[::-1]
+    reverse_flag = freq[0] > freq[-1]
+    if reverse_flag:
+        freq = freq[::-1]
 
     load_func = load_2bit_fits_file if nbits == 2 else load_fits_file
     print(
@@ -225,7 +210,7 @@ def process_fits_list(
     # 在预下采样后的采样点上的色散延迟
     dds = (dds_raw // pre_down_rate).astype(np.int64)
 
-    max_down_rate = config.down_sampling_rate_list.max()
+    max_down_rate = max(config.down_sampling_rate_list)
     block_file    = int(np.ceil(max_down_rate * config.block_size / file_leng))
     comb_file     = block_file + dds_file
     print(
@@ -437,9 +422,13 @@ def distribute_file_lists(file_lists, section_num, section, config):
     （与下一段重叠，只读不检索），避免段间接缝处色散修正失真；``info['n_search_files']``
     记录本段实际需检索的文件数（不含重叠）。
     """
+    if section_num <= 0:
+        raise ValueError(f"section_num={section_num} 必须大于 0")
+    if section < 0 or section >= section_num:
+        raise ValueError(f"section={section} 必须位于 [0, {section_num})")
     if len(file_lists) == 1:
         identifier, fits_list, info = file_lists[0]
-        section_size = len(fits_list) // section_num + 1
+        section_size = (len(fits_list) + section_num - 1) // section_num
         start_idx    = section * section_size
         end_idx      = (section + 1) * section_size
         n_search     = len(fits_list[start_idx:end_idx])  # 本段实际要检索的文件数

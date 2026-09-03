@@ -9,3 +9,4 @@ matplotlib>=3.5.0
 tqdm>=4.65.0
 scikit-learn>=1.0.0
 umap-learn>=0.5.0
+pytest>=7.0.0

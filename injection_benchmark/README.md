@@ -1,9 +1,17 @@
 # DRAFTS 注入基准
 
-本目录用于评估 DRAFTS 搜索链路：把模拟 FRB 注入真实 FAST 背景，生成 raw8/packed2 FITS，调用搜索 runtime，匹配 truth manifest，并汇总召回、误报和量化影响。
+本目录用于评估 DRAFTS 搜索链路：把模拟 FRB 注入真实 FAST 背景，生成 raw8/packed2 FITS，调用搜索 runtime，匹配 truth manifest，并汇总召回、误报和量化影响。目录内的 `search_runtime/` 包含完整的 detector、binary 模型定义和搜索核心，整个目录可以单独复制运行。
 
-第一次使用 DRAFTS 时，先按[仓库根 README](../README.md#快速开始)完成环境安装。
-本文只说明注入信号、campaign 运行方式、truth matching 和 PRESTO 对照。
+## 环境
+
+安装本目录的 Python 依赖，并另外安装与 CUDA 匹配的 CuPy：
+
+```bash
+python -m pip install -r requirements.txt
+python -m pip install cupy-cuda12x
+```
+
+检测器和二分类器权重放入 `search_runtime/models/`。PRESTO 对照搜索需要系统中另外安装 PRESTO，DRAFTS 注入、搜索、匹配和汇总流程不依赖仓库中的其他目录。
 
 ## 流程
 
@@ -120,7 +128,7 @@ curl -fL \
 复用同一批注入数据比较不同模型时，先生成一次注入数据：
 
 ```bash
-cd DRAFTS/injection_benchmark
+cd /path/to/injection_benchmark
 python run_campaign.py \
   --background-dir /path/to/rawdata \
   --work-root /path/to/injection_benchmark/runs \
@@ -154,7 +162,7 @@ python generate_injections.py \
 可以替换成不会与已有结果冲突的名称。
 
 ```bash
-cd DRAFTS/injection_benchmark
+cd /path/to/injection_benchmark
 python run_campaign.py \
   --work-root /path/to/injection_runs/runs \
   --sim-root /path/to/injection_runs/simdata \

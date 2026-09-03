@@ -42,8 +42,7 @@ device                     = core.device
 
 
 # ---------------------------------------------------------------------------
-# 模型加载：CenterNet → 统一返回 (model, decode_fn)
-# decode_fn 签名:  (raw_pred, conf_thr, iou_thr) -> list[(scores_np, boxes_cxcywh_np)]
+# 模型加载：CenterNet → (model, 中心点解码函数)
 # ---------------------------------------------------------------------------
 
 CENTERNET_BACKBONES = {
@@ -71,28 +70,8 @@ def _load_eval_model(model, ckpt_path):
     return model.to(device).eval()
 
 
-def _make_centernet_decode_fn(decode_centernet_outputs):
-    """把 CenterNet 的 centers 解码适配成统一候选格式。"""
-
-    def decode_fn(raw_pred, conf_thr=0.3, iou_thr=None, topk=100):
-        res = decode_centernet_outputs(
-            raw_pred, conf_thr=conf_thr, topk=topk, down_ratio=4
-        )
-        out = []
-        for s, c in res:
-            if c is None:
-                out.append((None, None))
-                continue
-            zeros = np.zeros(len(c), dtype=np.float32)
-            boxes = np.column_stack([c[:, 0], c[:, 1], zeros, zeros]).astype(np.float32)
-            out.append((s.astype(np.float32), boxes))
-        return out
-
-    return decode_fn
-
-
 def load_detector(detector_type, ckpt_path):
-    """根据 type 字符串构建检测模型并加载权重。返回 ``(model, decode_fn)``。
+    """根据 type 字符串构建检测模型，返回模型和原生中心点解码函数。
 
     detector_type:
         - ``centernet_conv_tiny``      → CenterNet(convnext_tiny) + 中心点解码
@@ -108,9 +87,7 @@ def load_detector(detector_type, ckpt_path):
             pretrained = False,
             head_ch    = 128,
         )
-        return _load_eval_model(model, ckpt_path), _make_centernet_decode_fn(
-            decode_centernet_outputs
-        )
+        return _load_eval_model(model, ckpt_path), decode_centernet_outputs
 
     raise ValueError(
         f"Unknown detector_type {detector_type!r}; valid: {VALID_DETECTORS}"

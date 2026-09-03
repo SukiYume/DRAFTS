@@ -1,0 +1,15 @@
+numpy
+scipy
+astropy
+matplotlib
+seaborn
+opencv-python
+torch
+torchvision
+tqdm
+pytest
+
+# Install the CuPy build matching the node's CUDA toolkit separately, for
+# example: python -m pip install cupy-cuda12x
+# PRESTO is required only for presto_runtime/ searches and is installed
+# independently from the Python environment.

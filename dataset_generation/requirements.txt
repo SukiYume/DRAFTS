@@ -1,0 +1,9 @@
+numpy
+scipy
+h5py
+astropy
+matplotlib
+torch
+
+# Install the CuPy build matching the node's CUDA toolkit separately, for
+# example: python -m pip install cupy-cuda12x

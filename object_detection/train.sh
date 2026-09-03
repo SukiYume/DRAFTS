@@ -17,6 +17,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 if [ "$#" -lt 2 ]; then
   echo "Usage: $0 \"<gpu_ids>\" <model>" >&2
   echo "  model: centernet-resnet18 | centernet-conv-tiny | centernet-conv-small" >&2
@@ -28,7 +30,7 @@ model=$2
 extra_args=("${@:3}")
 
 # 可通过环境变量覆盖
-data_path=${DATA_PATH:-./Data/}
+data_path=${DATA_PATH:-${SCRIPT_DIR}/Data}
 epochs=${EPOCHS:-50}
 num_workers=${NUM_WORKERS:-16}
 master_port=${MASTER_PORT:-$((RANDOM % 500 + 29500))}
@@ -48,15 +50,15 @@ export CUDA_VISIBLE_DEVICES="$gpu_ids"
 
 case "$model" in
   centernet-resnet18)
-    log_dir=./logs/logs_centernet_resnet18
+    log_dir="${SCRIPT_DIR}/logs/logs_centernet_resnet18"
     model_args=(--backbone resnet18)
     ;;
   centernet-conv-tiny)
-    log_dir=./logs/logs_centernet_conv_tiny
+    log_dir="${SCRIPT_DIR}/logs/logs_centernet_conv_tiny"
     model_args=(--backbone convnext_tiny)
     ;;
   centernet-conv-small)
-    log_dir=./logs/logs_centernet_conv_small
+    log_dir="${SCRIPT_DIR}/logs/logs_centernet_conv_small"
     model_args=(--backbone convnext_small)
     ;;
   *)
@@ -80,7 +82,7 @@ echo "================================================================"
 torchrun \
   --nproc_per_node "$nproc_per_node" \
   --master_port "$master_port" \
-  centernet_train.py \
+  "${SCRIPT_DIR}/centernet_train.py" \
   "${model_args[@]}" \
   --data-path "$data_path" \
   --log-dir "$log_dir" \

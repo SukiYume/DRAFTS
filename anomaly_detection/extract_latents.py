@@ -15,6 +15,8 @@ from models import VariationalRadioAutoencoder, compute_anomaly_scores
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+BASE_DIR = Path(__file__).resolve().parent
+
 
 def extract_latents(model, loader, device, beta):
     """Return pooled latent means and anomaly scores in loader order."""
@@ -211,7 +213,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--method", default="umap", choices=["umap", "tsne"])
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output_dir", default="./latent_analysis")
+    parser.add_argument("--output_dir", default=str(BASE_DIR / "latent_analysis"))
     sys.exit(main(parser.parse_args()))
 
 # fmt: on

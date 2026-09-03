@@ -285,25 +285,21 @@ class BurstDataset(Dataset):
     def add_noise(self, data):
         """以一定概率链式应用多种合成「假信号」，模拟 RFI / 周期脉冲 / 色散条纹等噪声模式。"""
         dmax, dmin = data.max(), data.min()
-        ops = [
-            self._noise_vertical_band_resize,
-            self._noise_oblique_streaks,
-            self._noise_dispersion_traces,
-            self._noise_periodic_blocks,
-            self._noise_dense_slope,
-            self._noise_column_gradient,
-            self._noise_horizontal_pixels,
-            self._noise_scatter_pixels,
-            self._noise_multiplicative_gauss,
-        ]
-        for op in ops:
-            data = op(data, dmax, dmin)
+        data = self._noise_vertical_band_resize(data)
+        data = self._noise_oblique_streaks(data, dmax)
+        data = self._noise_dispersion_traces(data, dmax)
+        data = self._noise_periodic_blocks(data, dmax)
+        data = self._noise_dense_slope(data, dmax)
+        data = self._noise_column_gradient(data, dmax, dmin)
+        data = self._noise_horizontal_pixels(data, dmax)
+        data = self._noise_scatter_pixels(data, dmax)
+        data = self._noise_multiplicative_gauss(data)
         return data
 
     # 每个 _noise_* 都按论文/经验给定一个触发概率；触发后改写 data 并返回。返回值即下一步输入。
 
     @staticmethod
-    def _noise_vertical_band_resize(data, dmax, dmin):
+    def _noise_vertical_band_resize(data):
         """70% 概率：在随机列插入纵向零带后再 resize 回 512²，模拟时间方向的间断。"""
         if np.random.rand() <= 0.3:
             return data
@@ -313,7 +309,7 @@ class BurstDataset(Dataset):
         return resize(data, (512, 512))
 
     @staticmethod
-    def _noise_oblique_streaks(data, dmax, dmin):
+    def _noise_oblique_streaks(data, dmax):
         """20% 概率：从某一行向左下/右下方画若干斜线（RFI 残留）。"""
         if np.random.rand() <= 0.8:
             return data
@@ -328,7 +324,7 @@ class BurstDataset(Dataset):
         return data
 
     @staticmethod
-    def _noise_dispersion_traces(data, dmax, dmin):
+    def _noise_dispersion_traces(data, dmax):
         """60% 概率：按 DM = 50~1050 的色散公式合成弯曲轨迹（最像真信号的'陷阱'）。"""
         if np.random.rand() <= 0.4:
             return data
@@ -349,7 +345,7 @@ class BurstDataset(Dataset):
         return data
 
     @staticmethod
-    def _noise_periodic_blocks(data, dmax, dmin):
+    def _noise_periodic_blocks(data, dmax):
         """60% 概率：在一段时间内按 1~9 个等距块写入亮斑（周期脉冲）。"""
         if np.random.rand() <= 0.4:
             return data
@@ -370,7 +366,7 @@ class BurstDataset(Dataset):
         return data
 
     @staticmethod
-    def _noise_dense_slope(data, dmax, dmin):
+    def _noise_dense_slope(data, dmax):
         """40% 概率：在一个梯形区域内大量画斜线，模拟连续色散条纹的密集情况。"""
         if np.random.rand() <= 0.6:
             return data
@@ -411,7 +407,7 @@ class BurstDataset(Dataset):
         return data
 
     @staticmethod
-    def _noise_horizontal_pixels(data, dmax, dmin):
+    def _noise_horizontal_pixels(data, dmax):
         """80% 概率：在若干行随机位置写入孤立亮像素，模拟尖刺 RFI。"""
         if np.random.rand() <= 0.2:
             return data
@@ -426,7 +422,7 @@ class BurstDataset(Dataset):
         return data
 
     @staticmethod
-    def _noise_scatter_pixels(data, dmax, dmin):
+    def _noise_scatter_pixels(data, dmax):
         """70% 概率：撒一把孤立亮点（pepper-style 强噪声）。"""
         if np.random.rand() <= 0.3:
             return data
@@ -437,7 +433,7 @@ class BurstDataset(Dataset):
         return data
 
     @staticmethod
-    def _noise_multiplicative_gauss(data, dmax, dmin):
+    def _noise_multiplicative_gauss(data):
         """60% 概率：整张图按 N(1, 0.2) 做乘法噪声，整体亮度抖动。"""
         if np.random.rand() <= 0.4:
             return data

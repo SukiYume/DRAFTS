@@ -37,6 +37,8 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 from ultralytics.utils.torch_utils import ModelEMA
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # ---------------------------------------------------------------------------
 # 1. 通用辅助：随机种子 / 分布式 / 设备
 # ---------------------------------------------------------------------------
@@ -336,7 +338,7 @@ def main(args):
         torch.backends.cudnn.allow_tf32       = True
 
     log_name = args.backbone.replace("convnext_", "conv_")
-    log_dir  = args.log_dir or f"./logs/logs_centernet_{log_name}/"
+    log_dir  = args.log_dir or os.path.join(BASE_DIR, "logs", f"logs_centernet_{log_name}")
     if rank == 0:
         os.makedirs(log_dir, exist_ok=True)
     if world_size > 1:
@@ -611,7 +613,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # paths
-    parser.add_argument("--data-path", type=str, default="./Data/")
+    parser.add_argument("--data-path", type=str, default=os.path.join(BASE_DIR, "Data"))
     parser.add_argument("--log-dir", type=str, default="")
     parser.add_argument("--resume", type=str, default="")
 

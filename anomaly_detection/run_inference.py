@@ -24,6 +24,8 @@ from prepare_data import DEFAULT_DOWN_TIMES, build_h5_from_fits_paths
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+BASE_DIR = Path(__file__).resolve().parent
+
 
 def run_inference(model, loader, device, use_vae=False, use_pred=False, beta=0.1):
     """Return total, reconstruction, and KL scores in loader order."""
@@ -451,7 +453,7 @@ if __name__ == "__main__":
         default = None,
         help    = "Use a fixed calibrated threshold instead of estimating one",
     )
-    parser.add_argument("--output_dir", default="./inference_results")
+    parser.add_argument("--output_dir", default=str(BASE_DIR / "inference_results"))
     parser.add_argument("--plot_anomalies", action="store_true")
     parser.add_argument("--top_n", type=int, default=20)
     sys.exit(main(parser.parse_args()))

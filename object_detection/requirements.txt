@@ -1,0 +1,11 @@
+numpy
+pandas
+h5py
+albumentations
+opencv-python
+matplotlib
+timm
+torch
+torchvision
+tqdm
+ultralytics
