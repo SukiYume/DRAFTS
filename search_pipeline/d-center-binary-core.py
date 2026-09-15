@@ -25,9 +25,10 @@ binary 分类器使用 :mod:`binary_model.build_binary_model`（与训练侧 ``b
   7. CuPy ↔ PyTorch 零拷贝桥接；归一化使用 ``torch.kthvalue``
   8. 用已上传 GPU 的当前搜索块生成轻量 512-channel RFI 掩码；每个坏 coarse
      channel 对应的一组细通道不参与 DM-time 求和
+  9. 前缀和按 prefix_channel_chunk 个细通道分块，块间复用缓冲并延续 float32 累加值
 
-单张 NVIDIA L40 运行一个 worker 时，完整 4096-DM 配置连同两套模型约占
-11.6 GiB；每张卡的 worker 数量必须按可用显存设置。
+默认前缀和缓冲覆盖 512 个细通道。原始数据和三幅 DM-time 输出保留完整精度；
+显存需求由输入窗口、DM trial 数、前缀和分块大小与模型推理 batch 共同决定。
 """
 
 import json
@@ -78,6 +79,8 @@ class ProcessConfig:
     class_block_size: int      = 512
     class_threshold: float     = 0.5
     classifier_batch_size: int = 64
+    # 每轮前缀和覆盖的细通道数；缓冲在频率块间复用。
+    prefix_channel_chunk: int  = 512
 
     # 同时控制 FITS 读取线程数和后续文件的预读深度；设为 1 时串行读取。
     fits_prefetch_workers: int   = 2
@@ -117,7 +120,7 @@ class DedispersionCache:
     shift_unit_raw_gpu: cp.ndarray       # (freq_reso,) float32，每 DM 的原始采样时移
     dm_time_gpu: cp.ndarray              # (3, dm_trials, dm_time_width) float32
     raw_data_gpu: cp.ndarray             # (data_width, freq_reso) uint16
-    data_cumsum_gpu: cp.ndarray          # (freq_reso, data_width) float32
+    data_cumsum_gpu: cp.ndarray          # (min(prefix_channel_chunk, freq_reso), data_width) float32
     dm_time_width: int                   # block 输出的降采样时间长度
     data_width: int                      # 含色散读取余量的原始时间长度
 
@@ -130,9 +133,8 @@ class DedispersionCache:
 #   1. data 转置成 (freq, time) → 同 warp 内 shift 连续 → 完美合并访问
 #   2. block 维度 (BLOCK_TIME, BLOCK_DM) = (32, 32)，一个 warp 对应一个 DM
 #   3. 同块相邻 DM 的 shift 只差少量样本，前缀数据可由 L1/L2 大量复用
-#   4. shift_base 使用只读缓存，不占用 shared memory
+#   4. shift_base 保存在全局显存
 #   5. split_pos 切两段循环，消除 hot loop 内分支
-#   6. __ldg / __restrict__ 编译器提示
 # ---------------------------------------------------------------------------
 
 # Kernel sources are kept ASCII-only because some NVRTC builds reject non-ASCII comments.
@@ -140,22 +142,21 @@ _PREPARE_KERNEL = cp.RawKernel(
     r"""
 #define TILE 32
 extern "C" __global__
-void prepare_data(const unsigned short* __restrict__ raw_data,
-                  const float* __restrict__ coarse_mean,
-                  const unsigned char* __restrict__ rfi_bad_coarse,
-                  const unsigned char* __restrict__ rfi_bad_time,
-                  float* __restrict__ data_out,
-                  int time_size, int freq_size,
+void prepare_data(const unsigned short* raw_data,
+                  const float* coarse_mean,
+                  const unsigned char* rfi_bad_coarse,
+                  const unsigned char* rfi_bad_time,
+                  float* data_out,
+                  int time_size, int freq_size, int freq_start, int freq_count,
                   int rfi_down_time_rate, int down_freq_rate) {
-    __shared__ float tile[TILE][TILE + 1];
+    __shared__ float tile[TILE][TILE];
 
-    int f_in = blockIdx.x * TILE + threadIdx.x;
-    int time_base = blockIdx.y * TILE;
+    int f_in = freq_start + blockIdx.y * TILE + threadIdx.x;
+    int time_base = blockIdx.x * TILE;
 
-    #pragma unroll
     for (int j = threadIdx.y; j < TILE; j += blockDim.y) {
         int t = time_base + j;
-        if (f_in < freq_size && t < time_size) {
+        if (f_in < freq_start + freq_count && t < time_size) {
             float denom = coarse_mean[f_in / down_freq_rate] + 1.0e-8f;
             tile[j][threadIdx.x] = rfi_bad_coarse[f_in / down_freq_rate]
                 ? 0.0f : (rfi_bad_time[t / rfi_down_time_rate]
@@ -169,10 +170,9 @@ void prepare_data(const unsigned short* __restrict__ raw_data,
     __syncthreads();
 
     int t_out = time_base + threadIdx.x;
-    #pragma unroll
     for (int j = threadIdx.y; j < TILE; j += blockDim.y) {
-        int f_out = blockIdx.x * TILE + j;
-        if (f_out < freq_size && t_out < time_size) {
+        int f_out = blockIdx.y * TILE + j;
+        if (f_out < freq_count && t_out < time_size) {
             data_out[
                 (size_t)f_out * (size_t)time_size + (size_t)t_out
             ] = tile[threadIdx.x][j];
@@ -187,10 +187,11 @@ void prepare_data(const unsigned short* __restrict__ raw_data,
 _DE_DISP_KERNEL = cp.RawKernel(
     r"""
 extern "C" __global__
-void de_disp(float* __restrict__ dm_time,
-             const float* __restrict__ data_cumsum,
-             const int*   __restrict__ shift_base,
+void de_disp(float* dm_time,
+             const float* data_cumsum,
+             const int*   shift_base,
              int freq_size, int split_pos, int dm_size,
+             int freq_start, int freq_count,
              int dm_time_size,
              int data_time_size,
              int down_time_rate,
@@ -200,42 +201,47 @@ void de_disp(float* __restrict__ dm_time,
     int x = blockIdx.y * blockDim.y + threadIdx.y;
     if (x >= dm_size || y >= dm_time_size) return;
 
-    float td_i = 0.0f, td_mid = 0.0f;
+    int base = x * dm_time_size + y;
+    int freq_end = freq_start + freq_count;
+    int low_end = min(split_pos + 1, freq_end);
+    // Continue the original channel-by-channel accumulation across launches.
+    float td_i = freq_start == 0 ? 0.0f : dm_time[base];
+    float td_mid = freq_start <= split_pos ? 0.0f : dm_time[dm_size * dm_time_size + base];
     int   data_stride = data_time_size;
     int   y_raw = y * down_time_rate;
     float inv_rate = 1.0f / (float)(down_time_rate * down_freq_rate);
     const int* shift_row = shift_base + (size_t)x * (size_t)freq_size;
 
-    #pragma unroll 4
-    for (int idx = 0; idx <= split_pos; idx++) {
-        int t0 = __ldg(&shift_row[idx]) + y_raw;
+    for (int idx = freq_start; idx < low_end; idx++) {
+        int t0 = shift_row[idx] + y_raw;
         int t1 = t0 + down_time_rate - 1;
         if (t0 >= 0 && t1 < data_time_size) {
             const float* row = data_cumsum
-                + (size_t)idx * (size_t)data_stride;
-            float value = __ldg(&row[t1]);
-            if (t0 > 0) value -= __ldg(&row[t0 - 1]);
+                + (size_t)(idx - freq_start) * (size_t)data_stride;
+            float value = row[t1];
+            if (t0 > 0) value -= row[t0 - 1];
             td_i += value * inv_rate;
         }
     }
-    td_mid = td_i;
+    if (freq_start <= split_pos) td_mid = td_i;
 
-    #pragma unroll 4
-    for (int idx = split_pos + 1; idx < freq_size; idx++) {
-        int t0 = __ldg(&shift_row[idx]) + y_raw;
+    for (int idx = max(split_pos + 1, freq_start); idx < freq_end; idx++) {
+        int t0 = shift_row[idx] + y_raw;
         int t1 = t0 + down_time_rate - 1;
         if (t0 >= 0 && t1 < data_time_size) {
             const float* row = data_cumsum
-                + (size_t)idx * (size_t)data_stride;
-            float value = __ldg(&row[t1]);
-            if (t0 > 0) value -= __ldg(&row[t0 - 1]);
+                + (size_t)(idx - freq_start) * (size_t)data_stride;
+            float value = row[t1];
+            if (t0 > 0) value -= row[t0 - 1];
             td_i += value * inv_rate;
         }
     }
 
-    int base = x * dm_time_size + y;
-    dm_time[1 * dm_size * dm_time_size + base] = td_mid;
-    dm_time[2 * dm_size * dm_time_size + base] = td_i - td_mid;
+    // Commit each half-band output once, when its contributing channels finish.
+    if (freq_start <= split_pos && freq_end > split_pos)
+        dm_time[1 * dm_size * dm_time_size + base] = td_mid;
+    if (freq_end == freq_size)
+        dm_time[2 * dm_size * dm_time_size + base] = td_i - td_mid;
     dm_time[0 * dm_size * dm_time_size + base] = td_i;
 }
 """,
@@ -246,9 +252,9 @@ void de_disp(float* __restrict__ dm_time,
 _CUTOUT_KERNEL = cp.RawKernel(
     r"""
 extern "C" __global__
-void make_cutout(float* __restrict__ output,
-                 const unsigned short* __restrict__ raw_data,
-                 const int* __restrict__ shifts,
+void make_cutout(float* output,
+                 const unsigned short* raw_data,
+                 const int* shifts,
                  int data_time_size, int freq_size, int start_raw,
                  int output_time_size, int down_time_rate,
                  int down_freq_rate, float raw_scale) {
@@ -284,8 +290,8 @@ void make_cutout(float* __restrict__ output,
 _COARSE_TIME_KERNEL = cp.RawKernel(
     r"""
 extern "C" __global__
-void make_coarse_time(const unsigned short* __restrict__ raw_data,
-                      float* __restrict__ coarse_time,
+void make_coarse_time(const unsigned short* raw_data,
+                      float* coarse_time,
                       int output_time_size, int freq_size,
                       int rfi_down_time_rate, int down_freq_rate) {
     int coarse_freq_size = freq_size / down_freq_rate;
@@ -491,6 +497,12 @@ def _validate_config(process_config, block_size, down_file_leng):
         errors.append(
             f"classifier_batch_size {process_config.classifier_batch_size} 必须大于 0"
         )
+    if (
+        isinstance(process_config.prefix_channel_chunk, bool)
+        or not isinstance(process_config.prefix_channel_chunk, (int, np.integer))
+        or process_config.prefix_channel_chunk <= 0
+    ):
+        errors.append("prefix_channel_chunk 必须是正整数")
     if process_config.class_block_size <= 0:
         errors.append(f"class_block_size {process_config.class_block_size} 必须大于 0")
     if (
@@ -548,7 +560,7 @@ def _build_dedispersion_cache(
 
     Args:
         height        : DM trial 数（dm_range / dm_step）。
-        dm_time_width : 后降采样输出时间维 = block_file * file_leng / down_time_rate。
+        dm_time_width : 后降采样输出时间维，已补齐至 block_size 的整数倍。
         data_width    : 原始输入时间维，包含负/正 DM 两侧的读取余量。
         input_origin_raw: 当前搜索 block 起点在输入数组中的原始采样位置。
     """
@@ -576,7 +588,7 @@ def _build_dedispersion_cache(
         shift_unit_raw_gpu = cp.asarray(shift_unit_raw),
         dm_time_gpu        = cp.empty((3, height, dm_time_width), dtype=cp.float32),
         raw_data_gpu       = cp.empty((data_width, freq_reso), dtype=cp.uint16),
-        data_cumsum_gpu    = cp.empty((freq_reso, data_width), dtype=cp.float32),
+        data_cumsum_gpu    = cp.empty((min(process_config.prefix_channel_chunk, freq_reso), data_width), dtype=cp.float32),
         dm_time_width      = dm_time_width,
         data_width         = data_width,
     )
@@ -716,46 +728,30 @@ def d_dm_time_g(data, dd_cache, process_config):
         dd_cache.raw_data_gpu, process_config
     )
 
-    # 每个细通道按所属 coarse channel 的全局均值归一化，动态 RFI mask 在转置时应用。
-    _PREPARE_KERNEL(
-        ((freq_reso + 31) // 32, (input_time + 31) // 32),
-        (32, 8),
-        (
-            dd_cache.raw_data_gpu,
-            coarse_mean_gpu,
-            bad_channel_mask_gpu,
-            bad_time_mask_gpu,
-            dd_cache.data_cumsum_gpu,
-            input_time,
-            freq_reso,
-            rfi_down_time_rate,
-            down_freq_rate,
-        ),
-    )
-    del coarse_mean_gpu, bad_channel_mask_gpu, bad_time_mask_gpu
-
-    # raw_data_gpu 保留未掩码的数据供 binary cutout 使用；消色散使用原位时间前缀和。
-    cp.cumsum(dd_cache.data_cumsum_gpu, axis=1, out=dd_cache.data_cumsum_gpu)
-
     BLOCK_TIME, BLOCK_DM = 32, 32
     nthreads = (BLOCK_TIME, BLOCK_DM)
     nblocks  = ((dm_time_width + BLOCK_TIME - 1) // BLOCK_TIME, (height + BLOCK_DM - 1) // BLOCK_DM)
-    _DE_DISP_KERNEL(
-        nblocks,
-        nthreads,
-        (
-            dd_cache.dm_time_gpu,
-            dd_cache.data_cumsum_gpu,
-            dd_cache.shift_base_gpu,
-            freq_reso,
-            dd_cache.split_pos,
-            height,
-            dm_time_width,
-            input_time,
-            down_time_rate,
-            down_freq_rate,
-        ),
-    )
+    channel_chunk = dd_cache.data_cumsum_gpu.shape[0]
+    # 全窗口 RFI 统计供所有块共享；每块延续原始细通道顺序和 float32 累计值。
+    for freq_start in range(0, freq_reso, channel_chunk):
+        freq_count = min(channel_chunk, freq_reso - freq_start)
+        prefix = dd_cache.data_cumsum_gpu[:freq_count]
+        # 时间维使用 grid.x，避免长输入超过 grid.y 的 65535 块限制。
+        _PREPARE_KERNEL(
+            ((input_time + 31) // 32, (freq_count + 31) // 32),
+            (32, 8),
+            (dd_cache.raw_data_gpu, coarse_mean_gpu, bad_channel_mask_gpu,
+             bad_time_mask_gpu, prefix, input_time, freq_reso, freq_start,
+             freq_count, rfi_down_time_rate, down_freq_rate),
+        )
+        cp.cumsum(prefix, axis=1, out=prefix)
+        _DE_DISP_KERNEL(
+            nblocks, nthreads,
+            (dd_cache.dm_time_gpu, prefix, dd_cache.shift_base_gpu,
+             freq_reso, dd_cache.split_pos, height, freq_start, freq_count,
+             dm_time_width, input_time, down_time_rate, down_freq_rate),
+        )
+    del coarse_mean_gpu, bad_channel_mask_gpu, bad_time_mask_gpu
     return dd_cache.dm_time_gpu
 
 
@@ -820,8 +816,8 @@ def _dedisperse_cutout_postdown_gpu(dd_cache, dm_value, toa_samp, output, input_
     shifts_gpu = cp.trunc(float(dm_value) * dd_cache.shift_unit_raw_gpu).astype(cp.int32)
     total = output.size
     _CUTOUT_KERNEL(
-        ((total + 255) // 256,),
-        (256,),
+        ((total + 127) // 128,),
+        (128,),
         (
             output,
             dd_cache.raw_data_gpu,
@@ -964,6 +960,8 @@ def process_fits_list(
 
     block_file = int(np.ceil(down_time_rate * block_size / file_leng))
     down_file_leng = block_file * file_leng // down_time_rate
+    # 短文件向上补齐检测窗口，缺少的原始采样复用后面的随机噪声补齐逻辑。
+    down_file_leng = ((down_file_leng + block_size - 1) // block_size) * block_size
 
     # 校验配置并把物理 DM 区间换算成 trial 几何和读取余量。
     dm_trials, num_dm_chunks, dm_first_trial, dm_last_trial = _validate_config(
@@ -975,7 +973,9 @@ def process_fits_list(
     if process_config.verbose:
         print(block_file, comb_file)
 
-    comb_file_leng = comb_file * file_leng  # 原始输入时间长度（含色散读取余量）
+    comb_file_leng = (
+        (required_prefix_files + dds_file) * file_leng + down_file_leng * down_time_rate
+    )  # 补齐后的原始输入长度，包含前后色散余量
 
     dd_cache = _build_dedispersion_cache(
         dm_trials,
@@ -1182,6 +1182,7 @@ def process_fits_list(
                         )
 
                 if not candidates:
+                    del img_batch_flat, img_batch, slice_data
                     continue
 
                 # 仅共享起始采样和逐细通道整数时移完全相同的 cutout。
@@ -1368,7 +1369,9 @@ def process_fits_list(
                                 manifest_stream.write(
                                     json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
                                 )
-                    del burst_batch
+                    del new_burst, burst_batch
+
+                del img_batch_flat, img_batch, slice_data
 
             del new_data_t, new_data, raw_data
 # fmt: on
