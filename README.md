@@ -69,7 +69,7 @@ flowchart LR
     A["真实背景 FITS"] --> B["模拟 FRB 注入<br/>dataset_generation"]
     B --> C["time–DM H5 训练集"]
     C --> D["CenterNet 检测器训练<br/>object_detection"]
-    C --> E["ConvNeXt 分类器训练<br/>binary_classification"]
+    BC["正负候选 H5 数据集"] --> E["ConvNeXt 分类器训练<br/>binary_classification"]
     F["真实 FAST FITS"] --> P["CPU 分组、解码与线程预取"]
     P --> U["原始分辨率 uint16<br/>每个窗口上传一次"]
     U --> G["GPU 动态 RFI、细通道消色散<br/>时间与频率下采样"]
@@ -145,6 +145,7 @@ CUDA 平台匹配的 `torch`、`torchvision` 安装命令，再安装仓库依�
 
 ```bash
 python -m pip install -r requirements.txt
+python -m pip install -r search_pipeline/requirements.txt
 python -m pip install cupy-cuda12x
 ```
 
@@ -236,7 +237,7 @@ EPOCHS=50 \
 | 任务 | 入口 |
 |---|---|
 | 未知 DM 盲搜 | `d-center-binary-gate.py` 或 `t-blind-section.py` |
-| 已知 DM / 候选 DM follow-up | `d-dm-time-predown.py` |
+| 已知 DM / 候选 DM follow-up | `d-dm-time.py` |
 | PBS 批量提交 | `s-pbsspt.py` |
 | binary 模型对比 | `t-binary-bench.sh` |
 
@@ -269,7 +270,7 @@ python s-pbsspt.py \
 单 section 调试可直接使用命令行入口：
 
 ```bash
-python search_pipeline/t-blind-section.py \
+python t-blind-section.py \
   --section 0 \
   --data-path /path/to/fast_observation \
   --output-root /path/to/drafts_search_output \
@@ -287,14 +288,16 @@ python search_pipeline/t-blind-section.py \
 
 ### Fixed-DM follow-up
 
-`d-dm-time-predown.py` 在一个已知 DM 上消色散，并按配置的整数时间下采样倍率运行 binary
+`d-dm-time.py` 在一个已知 DM 上消色散，并按配置的整数时间下采样倍率运行 binary
 分类器。通用入口默认使用 `prob=0.6`、`section_num=32` 和倍率 `[8]`；用户可以在
-`down_sampling_rate_list` 中配置多个合法倍率。相邻滑动窗口复用已解码 FITS。
+`down_sampling_rate_list` 中配置多个合法倍率。细通道按原始采样消色散后再下采样，GPU
+完成预处理和分类。相邻窗口复用 GPU 整数缓存，CPU 后台有界预读 FITS。
 
 输出写入 `<save_base>/<source>/CalData/<date>/<beam>/<rate>/`。当 `save_base` 的末级目录
 已经等于 source 名时，入口会直接复用该目录，路径中只保留一层 source。
 
-搜索前需要把检测器和分类器权重放入 `search_pipeline/models/`。完整参数、FITS 预取、
+盲搜需要检测器和分类器两份权重，fixed-DM 搜索只需要分类器权重；文件放入
+`search_pipeline/models/`。完整参数、FITS 预取、
 manifest、输出规则、fixed-DM 用法和排错表见
 [`search_pipeline/README.md`](search_pipeline/README.md)。
 
@@ -343,7 +346,7 @@ PRESTO 对照见
 python -c "import numpy, scipy, h5py, astropy, torch, torchvision; print('common imports OK')"
 python -c "import torch, cupy; assert torch.cuda.is_available(); print('CUDA devices', torch.cuda.device_count(), cupy.cuda.runtime.getDeviceCount())"
 python -c "from pathlib import Path; paths = [Path('search_pipeline/models/object_best_model_centernet_conv_tiny_ema_v10.pth'), Path('search_pipeline/models/binary_best_model_conv_small_ema.pth')]; assert all(p.is_file() for p in paths), paths; print('search weights OK')"
-python -m unittest discover -s injection_benchmark/tests -v
+python search_pipeline/s-pbsspt.py --help
 python -m compileall -q \
   dataset_generation \
   object_detection \

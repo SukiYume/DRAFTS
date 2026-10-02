@@ -44,7 +44,7 @@ False_FRB20240114A.h5
 
 | 数据集 | 含义 |
 |---|---|
-| `images` | time–DM 图像数组。 |
+| `images` | 512 × 512 候选图像数组；部署分类器使用消色散后的 time–frequency cutout，训练数据需与目标输入约定一致。 |
 | `labels` | 二分类标签；`1` 为真实 burst，`0` 为负样本。 |
 | `idx` | `images` 中的样本索引。 |
 | `names` | 样本名称。 |

@@ -1,7 +1,7 @@
 # 压缩 FITS fixed-DM 搜索
 
 本目录负责“校验并解压一组 `.fits.xz` → 按 section 提交 fixed-DM 搜索 → 等待人工确认
-TOA”的外层调度。搜索算法仍由上一级的 `d-dm-time-predown.py` 提供，这里不保留目标专用
+TOA”的外层调度。搜索算法仍由上一级的 `d-dm-time.py` 提供，这里不保留目标专用
 算法副本。
 
 ## 文件
@@ -22,7 +22,7 @@ example_M01	20260101	M01	/data/example/20260101	Example_tracking-M01_	280	8
 
 - `source_dir` 中应直接包含 `${prefix}*.fits.xz`。
 - `expected_files` 用于在解压前后做严格数量校验。
-- `sections` 是该 unit 实际提交的 PBS section 数，不再由文件数隐式推断。
+- `sections` 显式指定该 unit 实际提交的 PBS section 数。
 - 时间分辨率、频率通道数和每个 FITS 的采样数均从 FITS header 读取。
 
 ## 配置与运行

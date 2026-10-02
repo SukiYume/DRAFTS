@@ -72,7 +72,7 @@ flowchart LR
     A["Real background FITS"] --> B["Simulated FRB injection<br/>dataset_generation"]
     B --> C["time–DM H5 training set"]
     C --> D["CenterNet detector training<br/>object_detection"]
-    C --> E["ConvNeXt classifier training<br/>binary_classification"]
+    BC["Positive/negative candidate H5 datasets"] --> E["ConvNeXt classifier training<br/>binary_classification"]
     F["Real FAST FITS"] --> P["CPU grouping, decoding,<br/>and threaded prefetch"]
     P --> U["Native-resolution uint16<br/>one upload per window"]
     U --> G["GPU dynamic RFI, fine-channel de-dispersion,<br/>time/frequency downsampling"]
@@ -149,6 +149,7 @@ the repository requirements and the matching CuPy build. For CUDA 12.x:
 
 ```bash
 python -m pip install -r requirements.txt
+python -m pip install -r search_pipeline/requirements.txt
 python -m pip install cupy-cuda12x
 ```
 
@@ -241,7 +242,7 @@ self-contained runtime directory.
 | Task | Entry point |
 |---|---|
 | Blind search over unknown DM | `d-center-binary-gate.py` or `t-blind-section.py` |
-| Known-DM or candidate-DM follow-up | `d-dm-time-predown.py` |
+| Known-DM or candidate-DM follow-up | `d-dm-time.py` |
 | PBS batch submission | `s-pbsspt.py` |
 | Binary-classifier comparison | `t-binary-bench.sh` |
 
@@ -277,7 +278,7 @@ entry script and distributes logical sections evenly across GPU jobs.
 Use the command-line wrapper for a single-section check:
 
 ```bash
-python search_pipeline/t-blind-section.py \
+python t-blind-section.py \
   --section 0 \
   --data-path /path/to/fast_observation \
   --output-root /path/to/drafts_search_output \
@@ -296,18 +297,20 @@ model scores, and diagnostic paths recorded in `candidate_manifest.jsonl`.
 
 ### Fixed-DM follow-up
 
-`d-dm-time-predown.py` de-disperses at one known DM and applies the binary
+`d-dm-time.py` de-disperses at one known DM and applies the binary
 classifier at configurable integer time-downsampling rates. The generic entry
 defaults to `prob=0.6`, `section_num=32`, and rate `[8]`; multiple valid rates
 can be supplied through `down_sampling_rate_list`. Adjacent sliding windows
-reuse decoded FITS data.
+reuse GPU integer FITS caches. Fine channels are de-dispersed at native sampling
+before averaging, preprocessing and classification on the GPU; CPU workers prefetch FITS data.
 
 Outputs use `<save_base>/<source>/CalData/<date>/<beam>/<rate>/`. When the final
 component of `save_base` already matches the source name, the entry reuses that
 directory and keeps one source component in the path.
 
-Place detector and classifier checkpoints in `search_pipeline/models/` before
-running the search. The full parameter reference, FITS-prefetch behavior,
+Blind searches require detector and classifier checkpoints; fixed-DM searches
+require the classifier checkpoint. Place the required files in
+`search_pipeline/models/`. The full parameter reference, FITS-prefetch behavior,
 manifest workflow, fixed-DM mode, output layout, and troubleshooting guide are
 documented in
 [`search_pipeline/README.md`](search_pipeline/README.md).
@@ -358,11 +361,12 @@ repository root:
 python -c "import numpy, scipy, h5py, astropy, torch, torchvision; print('common imports OK')"
 python -c "import torch, cupy; assert torch.cuda.is_available(); print('CUDA devices', torch.cuda.device_count(), cupy.cuda.runtime.getDeviceCount())"
 python -c "from pathlib import Path; paths = [Path('search_pipeline/models/object_best_model_centernet_conv_tiny_ema_v10.pth'), Path('search_pipeline/models/binary_best_model_conv_small_ema.pth')]; assert all(p.is_file() for p in paths), paths; print('search weights OK')"
-python -m unittest discover -s injection_benchmark/tests -v
+python search_pipeline/s-pbsspt.py --help
 python -m compileall -q \
   dataset_generation \
   object_detection \
   binary_classification \
+  anomaly_detection \
   search_pipeline \
   injection_benchmark
 ```

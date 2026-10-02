@@ -27,7 +27,8 @@ CuPy 需要与运行节点的 CUDA 版本匹配，例如 CUDA 12 环境使用 `c
 
 ## 当前生成配置
 
-`run_generation.sh` 是当前推荐入口。它按 40 个 shard 生成数据，默认每轮并发 4 个 shard，并把任务分配到 GPU 0-7。
+`run_generation.sh` 按 40 个 shard 生成数据，默认每轮并发 4 个 shard，使用 GPU 0-3。
+`SHARDS_PER_WAVE` 控制每轮并发数，轮内任务按 GPU 0-7 循环分配。
 
 关键默认值：
 
@@ -46,7 +47,7 @@ CuPy 需要与运行节点的 CUDA 版本匹配，例如 CUDA 12 环境使用 `c
 
 ## 信号模型
 
-训练集不直接在 time-DM 图上画亮斑。生成器先把模拟 FRB 注入真实 raw8 Stokes-I 背景，再用 DRAFTS 消色散核生成 0-4096 DM canvas，最后裁切和 area-resample 成 512 x 512 detector 图。
+生成器先把模拟 FRB 注入真实 raw8 Stokes-I 背景，再用 DRAFTS 消色散核生成 0-4096 DM canvas，最后裁切和 area-resample 成 512 x 512 detector 图。
 
 单个信号的动态谱模型：
 

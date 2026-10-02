@@ -11,7 +11,7 @@
 |---|---|---|
 | 命令行盲搜测试 | `t-blind-section.py` | 参数完整，适合单 section / 多 section 调试。 |
 | 原始分辨率 GPU 生产盲搜 | `d-center-binary-gate.py` | 脚本底部配置物理 DM、路径和 GPU section；细通道消色散后再下采样。 |
-| 已知 DM / 候选 DM follow-up | `d-dm-time-predown.py` | 固定 DM，多时间下采样倍率，binary 分类。 |
+| 已知 DM / 候选 DM follow-up | `d-dm-time.py` | 原始采样 GPU 消色散后下采样，多倍率 binary 分类，支持末尾短文件。 |
 | 压缩观测 fixed-DM 批处理 | `search_xzdata/run_fixed_dm_xz.sh` | 校验并解压 `.fits.xz`、按 manifest 分 section 提交搜索。 |
 | gate / d-dm-time PBS 提交 | `s-pbsspt.py` | 自动读取 section 数，支持配置每块 GPU 的搜索进程并发上限。 |
 | fixed-DM binary 对比 | `t-binary-bench.sh` | 比较不同 binary 分类器的真实输出。 |
@@ -25,7 +25,7 @@
 |---|---|
 | `d-center-binary-gate.py` | 两阶段盲搜调度入口：组织 FITS、section 切分、加载模型、断点日志，并使用物理 DM 与动态 RFI 配置调用 core。 |
 | `d-center-binary-core.py` | 原始时间/频率分辨率 GPU 两阶段盲搜核心：细通道消色散、下采样、DM-time 图、CenterNet 检测、candidate cutout、binary 分类和保存。 |
-| `d-dm-time-predown.py` | fixed-DM follow-up：单 DM 消色散、多尺度图片生成、binary 分类。 |
+| `d-dm-time.py` | GPU fixed-DM：原始整数上传、细通道消色散后平均、多尺度零拷贝分类、短文件窗口补齐。 |
 | `search_xzdata/` | 可复用的 `.fits.xz` fixed-DM 控制器；目标专用 preset 和 manifest 仅保存在本地。 |
 | `t-blind-section.py` | 命令行式盲搜 section wrapper。 |
 | `t-blind-batch.sh` | 多 GPU 盲搜批量测试 wrapper。 |
@@ -185,7 +185,7 @@ CUDA_VISIBLE_DEVICES=0 python t-blind-section.py \
   --section 0 \
   --gpu-num 1 \
   --data-path /path/to/fast_observation/source/date \
-  --output-root /home/ykzhang/data_searching/outputs/blind \
+  --output-root /path/to/search_outputs/blind \
   --beam M01 \
   --detector-type centernet_conv_tiny \
   --detector-ckpt models/object_best_model_centernet_conv_tiny_ema_v10.pth \
@@ -216,8 +216,8 @@ CUDA_VISIBLE_DEVICES=0 python t-blind-section.py \
 开发节点上直接跑多 section 示例：
 
 ```bash
-ROOT=/home/ykzhang/data_searching \
-OUTPUT_ROOT=/home/ykzhang/data_searching/outputs/blind \
+ROOT=/path/to/search_pipeline \
+OUTPUT_ROOT=/path/to/search_outputs/blind \
 BEAM=all GPU_NUM=8 \
 DM_MIN=0 DM_RANGE=4096 DM_STEP=1 DM_THRESHOLD=10 BLOCK_SIZE=4096 DET_PROB=0.45 \
   bash t-blind-batch.sh /path/to/fast_observation/
@@ -288,7 +288,7 @@ process_config = ProcessConfig(
 分别覆盖 0--1024、1024--2048、2048--3072 和 3072--4096 的检测图。
 
 `dm_range / dm_step` 必须是正整数且是 1024 的整数倍。配置不能完整切块时
-程序不会补零，而是报错并给出最近的合法 `dm_range`，避免空白行改变图像动态范围。
+程序会对无法完整切块的配置报错，并给出最近的合法 `dm_range`，保持检测图的有效范围。
 常规 4096-DM 盲搜写作 `dm_min=0, dm_range=4096, dm_step=1`。
 当搜索区间包含负 DM 时，gate 会根据 FITS 头中的频率范围、`TBIN` 和单文件长度
 自动计算前向、后向 overlap；前置 FITS 只提供消色散余量，不会被重复搜索。观测
@@ -376,7 +376,7 @@ cut_toa_sec = (signal_mjd - obs_start_mjd) * 86400.0
 
 ## Fixed-DM Follow-up
 
-`d-dm-time-predown.py` 适合：
+`d-dm-time.py` 适合：
 
 - 已知重复源 DM，回看一批观测。
 - 盲搜发现候选后，在候选 DM 附近复查。
@@ -400,13 +400,13 @@ beam_filter = "M01"
 ```
 
 `prob=0.6`、`section_num=32` 和 `[8]` 是通用入口默认值。多尺度复查可把
-`down_sampling_rate_list` 设置为多个正整数。实现会先按最小倍率预下采样，倍率列表中的
-每个值都需要被实际预下采样率整除。相邻滑动窗口通过内存缓存复用已解码 FITS。
+`down_sampling_rate_list` 设置为多个正整数。实现先按细通道原始采样时移消色散，
+公共时间平均倍率为各倍率的最大公约数。相邻窗口复用 GPU 整数缓存，后台线程有界预读 FITS。
 
 运行：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python d-dm-time-predown.py 0
+CUDA_VISIBLE_DEVICES=0 python d-dm-time.py 0
 ```
 
 Fixed-DM 输出布局：
@@ -450,6 +450,31 @@ python c-data-check.py 0
 
 ## PBS 批量提交
 
+### GPU fixed-DM 入口
+
+`d-dm-time.py` 通过底部配置指定 DM、观测路径、输出路径与模型权重，通过位置参数指定
+section 编号，候选输出使用 `CalData/<date>/<beam>/<rate>/` 布局。
+配置类的 `classifier_batch_size` 默认 16，通用入口显式设为 32，可按单卡显存降低。
+`fits_prefetch_workers=2` 控制后台预读，设为 0 使用同步读取。入口依赖 CUDA、CuPy、PyTorch 和
+现有 FITS/绘图依赖。原始输入及重叠文件缓存保存在 GPU，显存需求随文件长度、通道数、
+DM 读取余量和并发进程数增加。
+
+CPU 负责读取原始整数 FITS。8-bit 偏振合并、2-bit 解包均在 GPU 完成；输入缓存使用
+uint16。融合 CUDA kernel 按细频率通道的原始采样时移取值，再完成时间和频率平均。
+多倍率搜索对每个输入块只执行一次消色散，公共时间平均倍率取所有倍率的最大公约数。
+各倍率从公共 512 通道数据继续做整数倍时间平均，并在独立缓冲中预处理和分类。
+CuPy 输出通过 DLPack 零拷贝送入 PyTorch，GPU 按图完成基线归一化、5/95% 分位截断和
+分类。分类分数、命中编号及需要保存的候选图像复制回 CPU。
+
+末尾短文件按真实长度向上补齐完整 512 点检测窗口；色散余量和补齐噪声在 GPU 生成。
+保存候选时检查峰值位于真实数据区域。单观测切分时保留原始首文件的标称长度，保持
+末尾短文件的 TOA 换算正确。任意文件组处理失败，入口最终返回非零退出码。
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python d-dm-time.py 0
+python s-pbsspt.py -s d-dm-time.py -n 16:8 -j fixed-dm -w 1
+```
+
 ### gate / d-dm-time
 
 `s-pbsspt.py` 要求显式提供 `--script`、`--nodes` 和 `--job-name`。它读取入口脚本中的
@@ -461,6 +486,14 @@ python c-data-check.py 0
 
 每个搜索进程都使用 `--threads` 指定的 CPU 线程上限。提高 `--workers-per-gpu` 会同时增加
 GPU 显存占用、主机内存占用和 CPU 线程需求。生产运行前可以用 `--dry-run` 检查生成的 PBS。
+
+`--conda-env` 默认使用 `pytorch`，同一提交批次的所有作业使用指定环境。需要其他环境的
+节点应单独提交，例如 `--conda-env normal`；环境选择由提交参数控制。
+
+每个 PBS 作业的所有 section 输出统一写入 `<job-name>-jobxx-yy.log`，每行搜索输出带有
+`[section N]` 前缀。日志末尾列出成功和失败的 section，以及作业退出状态。提交器检查
+搜索进程退出码和 `Error processing` / Python traceback；入口捕获处理异常并返回 0 时，
+该 section 仍计为失败，PBS 作业返回非零退出码。
 
 | 短名 | 完整参数 | 含义 |
 |---|---|---|
@@ -501,7 +534,7 @@ python s-pbsspt.py -s d-center-binary-gate.py -n 1:8 -j gate -w 4
 
 # 同一个提交器运行任意 d-dm-time 入口
 python s-pbsspt.py \
-  --script d-dm-time-predown.py \
+  --script d-dm-time.py \
   --nodes 1:8 \
   --job-name d-dm \
   --dry-run
@@ -514,7 +547,10 @@ python s-pbsspt.py \
 ```
 
 入口脚本需要接受位置参数 `<section>`，并在主配置中提供唯一的字面量
-`section_num = N,`。`d-center-binary-gate.py` 和全部 d-dm-time 入口均使用该契约。
+`section_num = N,`。`d-center-binary-gate.py` 和 `d-dm-time.py` 均使用该契约。
+
+目标专用入口可以从 `d-dm-time.py` 复制并修改底部配置，命名为 `d-dm-time-<target>.py`。
+这些文件保存观测路径和目标参数，保留在各自的运行目录；仓库发布通用入口。
 
 ## Benchmark 工具
 

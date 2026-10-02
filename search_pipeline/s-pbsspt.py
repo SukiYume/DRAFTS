@@ -28,6 +28,34 @@ DEFAULT_WORKERS_PER_GPU = 1
 DEFAULT_SUBMIT_DELAY_S  = 2.0
 
 
+def run_section(script_path, section):
+    """合并并标记子进程输出，把搜索入口捕获的处理异常转换为失败状态。"""
+    failed = False
+    try:
+        process = subprocess.Popen(
+            [sys.executable, "-u", script_path, section],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError as exc:
+        print(f"[section {section}] Launch failed: {exc}", flush=True)
+        return 1
+    assert process.stdout is not None
+    with process.stdout:
+        for line in process.stdout:
+            print(f"[section {section}] {line.rstrip()}", flush=True)
+            if re.match(r"\s*(Error processing\b|Traceback \(most recent call last\):)", line):
+                failed = True
+    exit_code = process.wait()
+    if exit_code == 0 and failed:
+        print(f"[section {section}] Processing error detected; marking section failed", flush=True)
+        return 1
+    return exit_code if exit_code >= 0 else 128 - exit_code
+
+
 def parse_node_config(value):
     """解析 ``1:8,2:8`` 为 ``{1: 8, 2: 8}``。"""
     config = {}
@@ -124,7 +152,7 @@ def render_pbs_script(
     sections_bash = " ".join(map(str, sections))
     root_shell    = shlex.quote(str(root_path))
     script_shell  = shlex.quote(str(script_path))
-    log_dir_shell = shlex.quote(str(pbs_dir))
+    runner_shell  = shlex.quote(str(Path(__file__).resolve()))
     env_shell     = shlex.quote(conda_env)
 
     return f"""#!/bin/bash
@@ -136,8 +164,8 @@ def render_pbs_script(
 #PBS -W x=GRES:gpu@1
 
 SHELL_INIT="${{SHELL_INIT:-${{HOME}}/.bashrc}}"
-source "$SHELL_INIT"
-conda activate {env_shell}
+source "$SHELL_INIT" || exit 1
+conda activate {env_shell} || exit 1
 if command -v nomps >/dev/null 2>&1; then
     nomps
 fi
@@ -151,12 +179,12 @@ export BLIS_NUM_THREADS={threads}
 
 ROOT_PATH={root_shell}
 SCRIPT_PATH={script_shell}
-LOG_DIR={log_dir_shell}
+RUNNER_PATH={runner_shell}
 PYTHON_BIN="${{PYTHON_BIN:-python}}"
 sections=({sections_bash})
 workers_per_gpu={workers_per_gpu}
 
-cd "$ROOT_PATH"
+cd "$ROOT_PATH" || exit 1
 echo "Job started at: $(date)"
 echo "Running on node: $(hostname)"
 echo "Sections: ${{sections[*]}}"
@@ -165,14 +193,15 @@ nvidia-smi
 
 status=0
 pids=()
+batch_sections=()
+successful_sections=()
+failed_sections=()
 
 run_section() {{
-    local section="$1" section_tag log_file exit_code
-    section_tag=$(printf "%0{section_width}d" "$section")
-    log_file="$LOG_DIR/{job_name}-section${{section_tag}}.log"
-    echo "Starting section $section; log=$log_file"
+    local section="$1" exit_code
+    echo "Starting section $section"
 
-    "$PYTHON_BIN" -u "$SCRIPT_PATH" "$section" >"$log_file" 2>&1
+    "$PYTHON_BIN" -u "$RUNNER_PATH" --run-section "$SCRIPT_PATH" "$section"
     exit_code=$?
     if (( exit_code == 0 )); then
         echo "Section $section finished successfully"
@@ -183,22 +212,32 @@ run_section() {{
 }}
 
 wait_batch() {{
-    local pid
-    for pid in "${{pids[@]}}"; do
-        wait "$pid" || status=1
+    local index
+    for index in "${{!pids[@]}}"; do
+        if wait "${{pids[$index]}}"; then
+            successful_sections+=("${{batch_sections[$index]}}")
+        else
+            status=1
+            failed_sections+=("${{batch_sections[$index]}}")
+        fi
     done
     pids=()
+    batch_sections=()
 }}
 
 for section in "${{sections[@]}}"; do
     run_section "$section" &
     pids+=("$!")
+    batch_sections+=("$section")
     if (( ${{#pids[@]}} >= workers_per_gpu )); then
         wait_batch
     fi
 done
 
 wait_batch
+echo "Successful sections (${{#successful_sections[@]}}): ${{successful_sections[*]}}"
+echo "Failed sections (${{#failed_sections[@]}}): ${{failed_sections[*]}}"
+echo "Job exit status: $status"
 echo "Job finished at: $(date)"
 exit "$status"
 """
@@ -321,6 +360,12 @@ def build_parser():
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv and argv[0] == "--run-section":
+        if len(argv) != 3:
+            print("--run-section requires SCRIPT_PATH SECTION", file=sys.stderr)
+            return 2
+        return run_section(argv[1], argv[2])
     args = build_parser().parse_args(argv)
     if args.status:
         return check_status()

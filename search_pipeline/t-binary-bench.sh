@@ -287,7 +287,7 @@ import numpy as np
 import torch
 
 root_dir = Path(os.environ["ROOT_DIR"])
-module_path = root_dir / "d-dm-time-predown.py"
+module_path = root_dir / "d-dm-time.py"
 spec = importlib.util.spec_from_file_location("d_dm_time_predown", module_path)
 if spec is None or spec.loader is None:
     raise RuntimeError(f"Unable to import {module_path}")
@@ -331,7 +331,8 @@ config = predown.ProcessConfig(
     DM=dm,
     prob=prob,
     block_size=512,
-    gpu_num=1,
+    classifier_batch_size=32,
+    fits_prefetch_workers=2,
     down_sampling_rate_list=rates,
 )
 

@@ -1,8 +1,8 @@
 # Radio Telescope Anomaly Detection
 
-这个目录实现基于 AE/VAE 重建误差的射电时频图异常检测，也支持用前一个切片预测下一个切片的时间一致性模式。模型使用 ConvNeXt-Tiny 或 ResNet18 编码器，以及带门控跳连的对称解码器。目录包含完整的数据准备、模型、训练、推理、依赖清单和本地权重，可以单独复制运行。
+这个目录实现基于 AE/VAE 重建误差的射电时频图异常检测，也支持用前一个切片预测下一个切片的时间一致性模式。模型使用 ConvNeXt-Tiny 或 ResNet18 编码器，以及带门控跳连的对称解码器。目录包含完整的数据准备、模型、训练、推理和依赖清单，可以单独复制运行。模型权重由训练生成，并通过推理参数指定。
 
-## 保留内容
+## 文件职责
 
 - `prepare_data.py`：递归读取 PSRFITS，生成 HDF5 切片。
 - `dataset_h5.py`：单切片数据集、严格连续的相邻切片数据集和数据增强。
@@ -11,9 +11,8 @@
 - `run_inference.py`：HDF5/FITS 推理、阈值判断和可视化。
 - `extract_latents.py`：VAE 潜变量导出及 UMAP/t-SNE 图。
 - `train.sh`：集中配置的 Linux 训练入口。
-- `best_loss_model.pth`：本地保留的 ConvNeXt、128 潜通道 VAE 权重。
 
-历史运行目录、临时 HDF5 和缓存不属于源码。默认输出目录均已忽略；大规模输入和结果应放在仓库外。
+模型权重、默认输出目录和缓存由版本控制忽略；大规模输入和结果应放在仓库外。
 
 ## 环境
 
@@ -27,7 +26,7 @@ pip install -r requirements.txt
 
 ## 数据准备
 
-命令行可以接收一个或多个 FITS 文件、目录或通配符。目录会递归扫描 `.fit`/`.fits` 文件，不再依赖文件名包含特定波束编号。
+命令行可以接收一个或多个 FITS 文件、目录或通配符。目录会递归扫描 `.fit`/`.fits` 文件，接受任意波束编号的文件名。
 
 ```bash
 python prepare_data.py /data/observation_a /data/observation_b \
@@ -136,12 +135,12 @@ VAE 只在训练状态从后验采样；`eval()` 时固定解码 `mu`，因此�
 
 ## 推理
 
-使用本地保留权重从 FITS 运行：
+从 FITS 运行以下示例前，准备 ConvNeXt 编码器、128 潜通道的 VAE 权重。权重配置需要与推理参数一致：
 
 ```bash
 python run_inference.py \
     --fits_dir /data/observation \
-    --model_path ./best_loss_model.pth \
+    --model_path /models/best_loss_model.pth \
     --model vae \
     --encoder convnext \
     --latent_dim 128 \
@@ -180,7 +179,7 @@ anomaly_images/         # 可选的输入/目标/重建/差值图
 ```bash
 python extract_latents.py \
     --h5_path /data/anomaly/test.h5 \
-    --model_path ./best_loss_model.pth \
+    --model_path /models/best_loss_model.pth \
     --encoder convnext \
     --latent_dim 128 \
     --kl_weight 0.1 \

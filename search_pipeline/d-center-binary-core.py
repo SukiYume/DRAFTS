@@ -37,8 +37,8 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import dataclass
 
-import cv2
 import cupy as cp
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
@@ -68,19 +68,19 @@ class ProcessConfig:
     trial），因此物理 DM 宽度由 ``1024 * dm_step`` 自动派生。
     """
 
-    dm_min: float              = 0.0
-    dm_range: float            = 4096.0
-    dm_step: float             = 1.0
-    dm_threshold: float        = 50.0
-    block_size: int            = 8192
-    det_prob: float            = 0.45
-    section_num: int           = 5
-    time_factor: float         = 8.0
-    class_block_size: int      = 512
-    class_threshold: float     = 0.5
-    classifier_batch_size: int = 64
+    dm_min: float                = 0.0
+    dm_range: float              = 4096.0
+    dm_step: float               = 1.0
+    dm_threshold: float          = 50.0
+    block_size: int              = 8192
+    det_prob: float              = 0.45
+    section_num: int             = 5
+    time_factor: float           = 8.0
+    class_block_size: int        = 512
+    class_threshold: float       = 0.5
+    classifier_batch_size: int   = 64
     # 每轮前缀和覆盖的细通道数；缓冲在频率块间复用。
-    prefix_channel_chunk: int  = 512
+    prefix_channel_chunk: int    = 512
 
     # 同时控制 FITS 读取线程数和后续文件的预读深度；设为 1 时串行读取。
     fits_prefetch_workers: int   = 2
